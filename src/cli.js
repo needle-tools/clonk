@@ -599,11 +599,16 @@ const GameSoundsScreen = ({ game, sounds, onSelectSound, onDone, onBack }) => {
       ...eventIds.map((eid, i) => {
         const assigned = sounds[eid];
         const isCurrent = i === currentEvent;
+        const truncName = assigned ? basename(assigned).slice(0, 20) : null;
+        const prefix = isCurrent ? "▸" : assigned ? "✓" : "·";
+        const label = truncName
+          ? `${prefix} ${EVENTS[eid].name}: ${truncName}`
+          : `${prefix} ${EVENTS[eid].name}`;
         return h(Text, {
           key: eid,
           bold: isCurrent,
           color: isCurrent ? ACCENT : assigned ? "green" : "gray",
-        }, isCurrent ? `▸ ${EVENTS[eid].name}` : assigned ? `✓ ${EVENTS[eid].name}: ${basename(assigned)}` : `· ${EVENTS[eid].name}`);
+        }, label);
       }),
       h(Text, {
         key: "_done",
