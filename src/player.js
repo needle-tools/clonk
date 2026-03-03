@@ -301,7 +301,7 @@ export async function processSound(filePath) {
 
   // Build a deterministic output path based on input file hash
   const hash = createHash("md5").update(absPath).digest("hex").slice(0, 12);
-  const outDir = join(tmpdir(), "klonk-processed");
+  const outDir = join(tmpdir(), "klaudio-processed");
   const outName = `${basename(absPath, extname(absPath))}_${hash}.wav`;
   const outPath = join(outDir, outName);
 

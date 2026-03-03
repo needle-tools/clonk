@@ -803,7 +803,7 @@ const ExtractingScreen = ({ game, onDone, onBack }) => {
           return;
         }
 
-        const outputDir = join(tmpdir(), "klonk-extract", game.name.replace(/[^a-zA-Z0-9]/g, "_"));
+        const outputDir = join(tmpdir(), "klaudio-extract", game.name.replace(/[^a-zA-Z0-9]/g, "_"));
         const allOutputs = [];
 
         // Unity .resource files — extract FSB5 banks directly (no vgmstream needed for PCM16)
@@ -995,7 +995,7 @@ const DoneScreen = ({ result }) => {
       ),
     ),
     h(Box, { marginTop: 1 },
-      h(Text, { dimColor: true }, "  To remove: npx klonk --uninstall"),
+      h(Text, { dimColor: true }, "  To remove: npx klaudio --uninstall"),
     ),
   );
 };
@@ -1037,13 +1037,13 @@ const UninstallApp = () => {
   if (phase === "done") {
     return h(Box, { flexDirection: "column" },
       h(Header, null),
-      h(Text, { color: "green", marginLeft: 2 }, "  ✓ Klonk hooks removed."),
+      h(Text, { color: "green", marginLeft: 2 }, "  ✓ Klaudio hooks removed."),
     );
   }
 
   return h(Box, { flexDirection: "column" },
     h(Header, null),
-    h(Text, { color: "yellow", marginLeft: 2 }, "  No Klonk configuration found."),
+    h(Text, { color: "yellow", marginLeft: 2 }, "  No Klaudio configuration found."),
   );
 };
 

@@ -11,8 +11,8 @@ npx klaudio
 The interactive installer walks you through:
 
 1. **Choose scope** — install globally (`~/.claude`) or per-project (`.claude/`)
-2. **Pick a source** — use a built-in preset, scan your local games for sounds, or provide custom files
-3. **Preview & assign** — listen to sounds and assign them to events
+2. **Pick a source** — use a built-in preset, scan your Steam & Epic Games library for sounds, or provide custom files
+3. **Preview & assign** — listen to sounds and assign them to events (tab to switch between events)
 4. **Install** — writes Claude Code hooks to your `settings.json`
 
 ## Sound Sources
@@ -23,13 +23,14 @@ Ready-made sound packs (Retro 8-bit, Minimal Zen, Sci-Fi Terminal, Victory Fanfa
 
 ### Game Sound Scanner
 
-Scans your Steam and Epic Games libraries for audio files:
+Scans your local Steam and Epic Games libraries for audio files:
 
 - Finds loose audio files (`.wav`, `.mp3`, `.ogg`, `.flac`, `.aac`)
 - Extracts packed audio (Wwise `.wem`, FMOD `.bank`, `.fsb`) using [vgmstream](https://vgmstream.org/) (downloaded automatically)
+- Extracts Unity game audio from `.resource` files (PCM decoded directly, Vorbis converted via vgmstream)
 - Parses Wwise metadata (`SoundbanksInfo.json`) for descriptive filenames
 - Categorizes sounds (voice, ambient, music, SFX, UI, creature) for easy browsing
-- Caches extracted sounds in `~/.klonk/cache/` for instant reuse
+- Caches extracted sounds in `~/.klaudio/cache/` for instant reuse
 
 ### Custom Files
 
@@ -38,18 +39,19 @@ Point to your own `.wav`/`.mp3` files.
 ## Features
 
 - **Auto-preview** — sounds play automatically as you browse the list (toggle with `p`)
+- **Multi-game selection** — pick sounds from different games, tab between events
 - **Category filtering** — drill into voice, ambient, SFX, etc. when a game has enough variety
 - **Type-to-filter** — start typing to narrow down long lists
 - **10-second clamp** — long sounds are processed with ffmpeg: silence stripped, fade out baked in
 - **Background scanning** — game list updates live as directories are scanned
-- **Cross-platform** — Windows (PowerShell/ffplay), macOS (afplay/ffplay), Linux (aplay/ffplay)
+- **Pre-loads existing config** — re-running the installer shows your current sound selections
 
 ## Events
 
 | Event | Triggers when |
 |---|---|
-| Task Complete | Claude finishes a response |
 | Notification | Claude needs your attention |
+| Task Complete | Claude finishes a response |
 
 ## Uninstall
 

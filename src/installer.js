@@ -62,19 +62,19 @@ export async function install({ scope, sounds }) {
     const hookEvent = event.hookEvent;
     const playCommand = getHookPlayCommand(soundPath);
 
-    // Check if there's already a klonk hook for this event
+    // Check if there's already a klaudio hook for this event
     if (!settings.hooks[hookEvent]) {
       settings.hooks[hookEvent] = [];
     }
 
-    // Remove any existing klonk entries
+    // Remove any existing klaudio entries
     settings.hooks[hookEvent] = settings.hooks[hookEvent].filter(
-      (entry) => !entry._klonk
+      (entry) => !entry._klaudio
     );
 
     // Add our hook
     settings.hooks[hookEvent].push({
-      _klonk: true,
+      _klaudio: true,
       matcher: "",
       hooks: [
         {
@@ -112,7 +112,7 @@ export async function getExistingSounds(scope) {
     for (const [eventId, event] of Object.entries(EVENTS)) {
       const hookEntries = settings.hooks[event.hookEvent];
       if (!hookEntries) continue;
-      const entry = hookEntries.find((e) => e._klonk);
+      const entry = hookEntries.find((e) => e._klaudio);
       if (!entry?.hooks?.[0]?.command) continue;
 
       // Extract file path from the play command
@@ -129,7 +129,7 @@ export async function getExistingSounds(scope) {
 }
 
 /**
- * Uninstall klonk hooks from settings.
+ * Uninstall klaudio hooks from settings.
  */
 export async function uninstall(scope) {
   const claudeDir = getTargetDir(scope);
@@ -142,7 +142,7 @@ export async function uninstall(scope) {
     if (settings.hooks) {
       for (const [event, entries] of Object.entries(settings.hooks)) {
         settings.hooks[event] = entries.filter(
-          (entry) => !entry._klonk
+          (entry) => !entry._klaudio
         );
         if (settings.hooks[event].length === 0) {
           delete settings.hooks[event];
