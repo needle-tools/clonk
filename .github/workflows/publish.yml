@@ -16,12 +16,10 @@ jobs:
 
           - uses: actions/setup-node@v4
             with:
-              node-version: '22'
+              node-version: '24'
               registry-url: 'https://registry.npmjs.org'
 
           - run: npm install
 
           - name: Publish
-            run: npx needle-publish-helper publish "." --version+hash --create-tag --tag latest --webhook "${{ secrets.DISCORD_WEBHOOK }}"
-            env:
-              NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+            run: npx needle-publish-helper@stable publish "." --oidc --version+hash --create-tag --tag latest --webhook "${{ secrets.DISCORD_WEBHOOK }}" --llm-api-key "${{ secrets.LLM_API_KEY }}"
