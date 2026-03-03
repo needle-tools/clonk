@@ -1,9 +1,10 @@
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, readFile, stat, open } from "node:fs/promises";
 import { join, extname } from "node:path";
 import { platform, homedir } from "node:os";
 
 const AUDIO_EXTENSIONS = new Set([".wav", ".mp3", ".ogg", ".flac", ".aac"]);
 const PACKED_EXTENSIONS = new Set([".wem", ".bnk", ".bank", ".fsb", ".pck"]);
+const UNITY_RESOURCE_EXTENSIONS = new Set([".resource", ".ress"]);
 const MAX_DEPTH = 5;
 const MAX_FILES = 200;
 
@@ -236,7 +237,7 @@ async function getGameSources() {
 /**
  * Recursively find audio files in a directory.
  */
-async function findAudioFiles(dir, depth = 0, results = [], packedCount = { n: 0 }) {
+async function findAudioFiles(dir, depth = 0, results = [], packedCount = { n: 0 }, unityResources = []) {
   if (depth > MAX_DEPTH || results.length >= MAX_FILES) return results;
 
   try {
@@ -252,13 +253,15 @@ async function findAudioFiles(dir, depth = 0, results = [], packedCount = { n: 0
         if (["__pycache__", "node_modules", ".git", "shader", "texture"].some(s => lower.includes(s))) {
           continue;
         }
-        await findAudioFiles(fullPath, depth + 1, results, packedCount);
+        await findAudioFiles(fullPath, depth + 1, results, packedCount, unityResources);
       } else if (entry.isFile()) {
         const ext = extname(entry.name).toLowerCase();
         if (AUDIO_EXTENSIONS.has(ext)) {
           results.push({ path: fullPath, name: entry.name, dir });
         } else if (PACKED_EXTENSIONS.has(ext)) {
           packedCount.n++;
+        } else if (UNITY_RESOURCE_EXTENSIONS.has(ext)) {
+          unityResources.push(fullPath);
         }
       }
     }
@@ -276,12 +279,28 @@ const SKIP_DIRS = new Set([
   "steam controller configs", "epic online services",
 ]);
 
+/**
+ * Quick check if a file starts with FSB5 magic (Unity .resource with audio).
+ */
+async function hasFSB5Magic(filePath) {
+  try {
+    const fh = await open(filePath, "r");
+    const buf = Buffer.alloc(4);
+    await fh.read(buf, 0, 4, 0);
+    await fh.close();
+    return buf[0] === 0x46 && buf[1] === 0x53 && buf[2] === 0x42 && buf[3] === 0x35; // "FSB5"
+  } catch {
+    return false;
+  }
+}
+
 async function scanGameDir(gamePath, gameName, games, onProgress) {
   if (onProgress) onProgress({ phase: "scanning", game: gameName });
   await tick();
 
   const packedCount = { n: 0 };
-  let audioFiles = await findAudioFiles(gamePath, 0, [], packedCount);
+  const unityResources = [];
+  let audioFiles = await findAudioFiles(gamePath, 0, [], packedCount, unityResources);
 
   const seen = new Set();
   audioFiles = audioFiles.filter((f) => {
@@ -290,10 +309,22 @@ async function scanGameDir(gamePath, gameName, games, onProgress) {
     return true;
   });
 
+  // Check Unity .resource files for FSB5 audio
+  let unityAudioCount = 0;
+  const validUnityResources = [];
+  for (const resPath of unityResources) {
+    if (await hasFSB5Magic(resPath)) {
+      unityAudioCount++;
+      validUnityResources.push(resPath);
+    }
+  }
+
   games.set(gameName, {
     path: gamePath,
     files: audioFiles.slice(0, 50),
     packedAudioCount: packedCount.n,
+    unityAudioCount,
+    unityResources: validUnityResources,
   });
 }
 
@@ -313,7 +344,9 @@ export async function scanForGames(onProgress, onGameFound) {
         files: data.files,
         hasAudio: data.files.length > 0,
         packedAudioCount: data.packedAudioCount || 0,
-        canExtract: data.packedAudioCount > 0,
+        canExtract: (data.packedAudioCount || 0) > 0 || (data.unityAudioCount || 0) > 0,
+        unityAudioCount: data.unityAudioCount || 0,
+        unityResources: data.unityResources || [],
       });
     }
   }
@@ -359,7 +392,9 @@ export async function getAvailableGames(onProgress, onGameFound) {
       files: data.files,
       hasAudio: data.files.length > 0,
       packedAudioCount: data.packedAudioCount || 0,
-      canExtract: data.packedAudioCount > 0,
+      canExtract: (data.packedAudioCount || 0) > 0 || (data.unityAudioCount || 0) > 0,
+      unityAudioCount: data.unityAudioCount || 0,
+      unityResources: data.unityResources || [],
     }))
     // Games with audio first, then extractable, then others
     .sort((a, b) => {

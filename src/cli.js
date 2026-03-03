@@ -1,12 +1,12 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { render, Box, Text, useInput, useApp } from "ink";
-import SelectInput from "ink-select-input";
 import Spinner from "ink-spinner";
 import { PRESETS, EVENTS } from "./presets.js";
 import { playSoundWithCancel, getWavDuration } from "./player.js";
 import { getAvailableGames } from "./scanner.js";
 import { install, uninstall, getExistingSounds } from "./installer.js";
 import { getVgmstreamPath, findPackedAudioFiles, extractToWav } from "./extractor.js";
+import { extractUnityResource } from "./unity.js";
 import { getCachedExtraction, cacheExtraction, categorizeLooseFiles, getCategories, sortFilesByPriority } from "./cache.js";
 import { basename, dirname } from "node:path";
 import { tmpdir } from "node:os";
@@ -25,6 +25,57 @@ const Indicator = ({ isSelected }) =>
 
 const Item = ({ isSelected, label }) =>
   h(Text, { color: isSelected ? ACCENT : undefined, bold: isSelected }, label);
+
+// ── Non-wrapping SelectInput (clamps at boundaries) ─────────────
+const SelectInput = ({ items = [], isFocused = true, initialIndex = 0, indicatorComponent = Indicator, itemComponent = Item, limit: customLimit, onSelect, onHighlight }) => {
+  const hasLimit = typeof customLimit === "number" && items.length > customLimit;
+  const limit = hasLimit ? Math.min(customLimit, items.length) : items.length;
+  const [scrollOffset, setScrollOffset] = useState(0);
+  const [selectedIndex, setSelectedIndex] = useState(initialIndex ? Math.min(initialIndex, items.length - 1) : 0);
+  const previousItems = useRef(items);
+
+  useEffect(() => {
+    const prevValues = previousItems.current.map((i) => i.value);
+    const curValues = items.map((i) => i.value);
+    if (prevValues.length !== curValues.length || prevValues.some((v, i) => v !== curValues[i])) {
+      setScrollOffset(0);
+      setSelectedIndex(0);
+    }
+    previousItems.current = items;
+  }, [items]);
+
+  useInput(useCallback((input, key) => {
+    if (input === "k" || key.upArrow) {
+      if (selectedIndex <= 0) return; // clamp — don't wrap
+      const next = selectedIndex - 1;
+      let newOffset = scrollOffset;
+      if (hasLimit && next < scrollOffset) newOffset = next;
+      setSelectedIndex(next);
+      setScrollOffset(newOffset);
+      if (typeof onHighlight === "function") onHighlight(items[next]);
+    }
+    if (input === "j" || key.downArrow) {
+      if (selectedIndex >= items.length - 1) return; // clamp — don't wrap
+      const next = selectedIndex + 1;
+      let newOffset = scrollOffset;
+      if (hasLimit && next >= scrollOffset + limit) newOffset = next - limit + 1;
+      setSelectedIndex(next);
+      setScrollOffset(newOffset);
+      if (typeof onHighlight === "function") onHighlight(items[next]);
+    }
+    if (key.return) {
+      if (typeof onSelect === "function") onSelect(items[selectedIndex]);
+    }
+  }, [hasLimit, limit, scrollOffset, selectedIndex, items, onSelect, onHighlight]), { isActive: isFocused });
+
+  const visible = hasLimit ? items.slice(scrollOffset, scrollOffset + limit) : items;
+  return h(Box, { flexDirection: "column" }, visible.map((item, index) => {
+    const isSelected = index + scrollOffset === selectedIndex;
+    return h(Box, { key: item.key ?? item.value },
+      h(indicatorComponent, { isSelected }),
+      h(itemComponent, { ...item, isSelected }));
+  }));
+};
 
 // ── Screens ─────────────────────────────────────────────────────
 const SCREEN = {
@@ -82,7 +133,7 @@ const PresetScreen = ({ onNext, onBack }) => {
       label: `${p.icon} ${p.name}  — ${p.description}`,
       value: id,
     })),
-    { label: "🕹️  Scan local games  — find sounds from Steam/Epic", value: "_scan" },
+    { label: "🕹️  Scan local games  — find sounds from your Steam & Epic Games library", value: "_scan" },
     { label: "📁 Custom files  — provide your own sound files", value: "_custom" },
   ];
 
@@ -277,22 +328,32 @@ const GamePickScreen = ({ onNext, onExtract, onBack }) => {
     }
   });
 
-  const gamesWithAudio = games.filter((g) => g.hasAudio);
-  const extractable = games.filter((g) => !g.hasAudio && g.canExtract);
+  const usableGames = games.filter((g) => g.hasAudio || g.canExtract);
   const noAudio = games.filter((g) => !g.hasAudio && !g.canExtract);
 
-  const allItems = [
-    ...gamesWithAudio.map((g) => ({
-      key: `play:${g.name}`,
-      label: `${g.name}  (${g.fileCount} audio files)`,
-      value: `play:${g.name}`,
-    })),
-    ...extractable.map((g) => ({
-      key: `extract:${g.name}`,
-      label: `${g.name}  (${g.packedAudioCount} packed — extract with vgmstream)`,
-      value: `extract:${g.name}`,
-    })),
-  ];
+  const allItems = usableGames
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((g) => {
+      if (g.hasAudio) {
+        return {
+          key: `play:${g.name}`,
+          label: `${g.name}  (${g.fileCount} audio files)`,
+          value: `play:${g.name}`,
+        };
+      }
+      const hasUnity = (g.unityAudioCount || 0) > 0;
+      const hasPacked = (g.packedAudioCount || 0) > 0;
+      const detail = hasUnity && !hasPacked
+        ? `${g.unityAudioCount} Unity audio resource(s) — extract`
+        : hasPacked && !hasUnity
+          ? `${g.packedAudioCount} packed — extract with vgmstream`
+          : `${g.packedAudioCount} packed + ${g.unityAudioCount} Unity — extract`;
+      return {
+        key: `extract:${g.name}`,
+        label: `${g.name}  (${detail})`,
+        value: `extract:${g.name}`,
+      };
+    });
 
   const filterLower = filter.toLowerCase();
   const items = filter
@@ -371,6 +432,7 @@ const GameSoundsScreen = ({ game, sounds, onSelectSound, onDone, onBack }) => {
   const [filter, setFilter] = useState("");
   const [activeCategory, setActiveCategory] = useState(null); // null = show category picker
   const [autoPreview, setAutoPreview] = useState(true);
+  const [justSelected, setJustSelected] = useState(null); // brief confirmation flash
   const cancelRef = React.useRef(null);
 
   // Determine available categories with counts
@@ -494,19 +556,31 @@ const GameSoundsScreen = ({ game, sounds, onSelectSound, onDone, onBack }) => {
   const eventInfo = EVENTS[eventId];
   const stepLabel = `(${currentEvent + 1}/${eventIds.length})`;
 
-  const advance = useCallback(() => {
+  const advance = useCallback((selectedFile, selectedEventId) => {
     stopPlayback();
-    // Move to next event that hasn't been assigned yet, or wrap around
-    const nextUnassigned = eventIds.findIndex((eid, i) => i > currentEvent && !sounds[eid]);
-    if (nextUnassigned >= 0) {
-      setCurrentEvent(nextUnassigned);
-    } else {
-      // All done or wrapped — go to next sequential
-      setCurrentEvent((i) => Math.min(i + 1, eventIds.length - 1));
+    // Show confirmation flash
+    if (selectedFile) {
+      setJustSelected({ file: basename(selectedFile), event: EVENTS[selectedEventId]?.name || selectedEventId });
     }
-    setHighlightedFile(null);
-    setActiveCategory(null);
-    setFilter("");
+    const doAdvance = () => {
+      setJustSelected(null);
+      // Move to next event that hasn't been assigned yet, or wrap around
+      const nextUnassigned = eventIds.findIndex((eid, i) => i > currentEvent && !sounds[eid]);
+      if (nextUnassigned >= 0) {
+        setCurrentEvent(nextUnassigned);
+      } else {
+        // All done or wrapped — go to next sequential
+        setCurrentEvent((i) => Math.min(i + 1, eventIds.length - 1));
+      }
+      setHighlightedFile(null);
+      setActiveCategory(null);
+      setFilter("");
+    };
+    if (selectedFile) {
+      setTimeout(doAdvance, 600);
+    } else {
+      doAdvance();
+    }
   }, [currentEvent, eventIds, sounds, stopPlayback]);
 
   const nowPlayingFile = playing && highlightedFile && highlightedFile !== "_skip"
@@ -540,16 +614,20 @@ const GameSoundsScreen = ({ game, sounds, onSelectSound, onDone, onBack }) => {
     ),
     onDoneTab
       ? h(Text, { dimColor: true }, "Press enter to apply your sound selections")
-      : h(Text, { dimColor: true }, `${eventInfo.description}`),
+      : sounds[eventId]
+        ? h(Text, { color: "green" }, `✓ ${basename(sounds[eventId])}  —  ${eventInfo.description}`)
+        : h(Text, { dimColor: true }, `${eventInfo.description}`),
   );
 
   const nowPlayingBar = h(Box, { marginLeft: 2, height: 1 },
-    nowPlayingFile
-      ? h(Box, null,
-          h(Text, { color: "green", bold: true }, h(Spinner, { type: "dots" })),
-          h(Text, { color: "green", bold: true }, ` Now playing: ${basename(nowPlayingFile)}  ${elapsed}s / ${MAX_PLAY_SECONDS}s max`),
-        )
-      : h(Text, { dimColor: true }, " "),
+    justSelected
+      ? h(Text, { color: "green", bold: true }, `  ✓ Selected "${justSelected.file}" for ${justSelected.event}`)
+      : nowPlayingFile
+        ? h(Box, null,
+            h(Text, { color: "green", bold: true }, h(Spinner, { type: "dots" })),
+            h(Text, { color: "green", bold: true }, ` Now playing: ${basename(nowPlayingFile)}  ${elapsed}s / ${MAX_PLAY_SECONDS}s max`),
+          )
+        : h(Text, { dimColor: true }, " "),
   );
 
   // Apply tab: show summary and confirm
@@ -674,10 +752,10 @@ const GameSoundsScreen = ({ game, sounds, onSelectSound, onDone, onBack }) => {
             onSelect: (item) => {
               stopPlayback();
               if (item.value === "_skip") {
-                advance();
+                advance(null, null);
               } else {
                 onSelectSound(eventId, item.value);
-                advance();
+                advance(item.value, eventId);
               }
             },
           }),
@@ -720,36 +798,59 @@ const ExtractingScreen = ({ game, onDone, onBack }) => {
           return;
         }
 
-        // Get vgmstream-cli (downloads if needed)
-        setStatus("Getting vgmstream-cli...");
-        const vgmstream = await getVgmstreamPath((msg) => {
-          if (!cancelled) setStatus(msg);
-        });
-
-        // Find packed audio files
-        setStatus(`Scanning ${game.name} for packed audio...`);
-        const packedFiles = await findPackedAudioFiles(game.path, 30);
-
-        if (packedFiles.length === 0) {
-          if (!cancelled) onDone({ files: [], error: "No extractable audio files found" });
-          return;
-        }
-
-        setStatus(`Found ${packedFiles.length} files. Extracting...`);
-
-        // Extract to temp dir
         const outputDir = join(tmpdir(), "klonk-extract", game.name.replace(/[^a-zA-Z0-9]/g, "_"));
         const allOutputs = [];
 
-        for (const file of packedFiles) {
-          if (cancelled) return;
-          setStatus(`Extracting: ${file.name}`);
-          try {
-            const outputs = await extractToWav(file.path, outputDir, vgmstream);
-            allOutputs.push(...outputs);
-            setExtracted(allOutputs.length);
-          } catch {
-            // Skip files that fail
+        // Unity .resource files — extract FSB5 banks directly (no vgmstream needed for PCM16)
+        if (game.unityResources && game.unityResources.length > 0) {
+          setStatus(`Extracting Unity audio from ${game.unityResources.length} resource file(s)...`);
+          for (const resPath of game.unityResources) {
+            if (cancelled) return;
+            setStatus(`Extracting: ${basename(resPath)}`);
+            try {
+              const extracted = await extractUnityResource(resPath, outputDir);
+              // Only keep .wav files (PCM16); .fsb files need vgmstream
+              for (const f of extracted) {
+                if (f.path.endsWith(".wav")) {
+                  allOutputs.push(f.path);
+                }
+              }
+              setExtracted(allOutputs.length);
+            } catch { /* skip */ }
+          }
+          // If we got WAV files, we're done (skip vgmstream for .fsb Vorbis files for now)
+          // TODO: could also convert .fsb Vorbis via vgmstream if available
+        }
+
+        // Traditional packed audio (Wwise/FMOD)
+        if (allOutputs.length === 0) {
+          // Get vgmstream-cli (downloads if needed)
+          setStatus("Getting vgmstream-cli...");
+          const vgmstream = await getVgmstreamPath((msg) => {
+            if (!cancelled) setStatus(msg);
+          });
+
+          // Find packed audio files
+          setStatus(`Scanning ${game.name} for packed audio...`);
+          const packedFiles = await findPackedAudioFiles(game.path, 30);
+
+          if (packedFiles.length === 0 && allOutputs.length === 0) {
+            if (!cancelled) onDone({ files: [], error: "No extractable audio files found" });
+            return;
+          }
+
+          setStatus(`Found ${packedFiles.length} files. Extracting...`);
+
+          for (const file of packedFiles) {
+            if (cancelled) return;
+            setStatus(`Extracting: ${file.name}`);
+            try {
+              const outputs = await extractToWav(file.path, outputDir, vgmstream);
+              allOutputs.push(...outputs);
+              setExtracted(allOutputs.length);
+            } catch {
+              // Skip files that fail
+            }
           }
         }
 

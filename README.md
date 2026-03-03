@@ -63,3 +63,5 @@ npx klaudio --uninstall
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed
 - For packed audio extraction: internet connection (vgmstream-cli is downloaded automatically)
 - For best playback with fade effects: [ffmpeg/ffplay](https://ffmpeg.org/) on PATH (falls back to native players)
+
+> **Note:** Currently only tested on Windows. macOS and Linux support is planned but not yet verified.
