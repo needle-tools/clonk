@@ -517,11 +517,18 @@ export async function extractBunFile(bunPath, outputDir, onProgress) {
         const { sampleRate, bitsPerSample, channels, pcmData } = parseImusResource(fullBuf);
         if (!pcmData || pcmData.length === 0) continue;
 
-        // Write WAV
+        // Write WAV into a subdirectory named after the BUN file
         const wav = createWav(pcmData, sampleRate, channels, bitsPerSample);
+        const bunName = basename(bunPath, extname(bunPath)).toLowerCase();
+        const subDir = bunName.includes("vox") ? "voice"
+          : bunName.includes("mus") ? "music"
+          : bunName.includes("sfx") ? "sfx"
+          : "other";
+        const bunOutputDir = join(outputDir, subDir);
+        await mkdir(bunOutputDir, { recursive: true });
         const safeName = entry.filename.replace(/[^a-zA-Z0-9._-]/g, "_");
         const outName = safeName.replace(/\.[^.]+$/, "") + ".wav";
-        const outPath = join(outputDir, outName);
+        const outPath = join(bunOutputDir, outName);
         await writeFile(outPath, wav);
         outputs.push(outPath);
       } catch {

@@ -14,9 +14,9 @@ const CATEGORY_PATTERNS = {
     "forest", "weather", "background_loop", "room_tone",
   ],
   music: [
-    "music", "mus_", "soundtrack", "bgm", "score", "theme",
+    "music", "mus_", "/music/", "soundtrack", "bgm", "score", "theme",
     "menu_music", "mainmenu", "background_music", "level_music",
-    "snippet",
+    "snippet", "musdisk",
   ],
   sfx: [
     "sfx", "effect", "impact", "explosion", "hit", "slash",
@@ -31,9 +31,9 @@ const CATEGORY_PATTERNS = {
     "interface", "hud", "tab", "scroll",
   ],
   voice: [
-    "voice", "vocal", "vox", "dialogue", "dialog", "speech",
+    "voice", "vocal", "vox", "/voice/", "dialogue", "dialog", "speech",
     "narrat", "speak", "talk", "grunt", "shout", "scream",
-    "laugh", "cry", "cheer",
+    "laugh", "cry", "cheer", "voxdisk",
   ],
   creature: [
     "creature", "animal", "monster", "enemy", "npc",
@@ -43,12 +43,29 @@ const CATEGORY_PATTERNS = {
 };
 
 /**
+ * SCUMM BUN filename prefix patterns.
+ * These are checked before generic patterns for files from BUN extraction.
+ */
+const SCUMM_PREFIX_PATTERNS = {
+  voice: [/^ad[a-z]/i, /^adgt/i, /^adso/i],
+  music: [/^\d{4}-[a-z]_/i],
+};
+
+/**
  * Infer a category from a filename, its parent folder path, and optional metadata name.
  */
 export function inferCategory(filePath, metadataName) {
   const name = (metadataName || basename(filePath)).toLowerCase();
   const dirPath = dirname(filePath).toLowerCase().replace(/\\/g, "/");
   const combined = `${dirPath}/${name}`;
+
+  // Check SCUMM prefix patterns first (high-confidence filename-based)
+  const baseName = basename(name, extname(name));
+  for (const [cat, patterns] of Object.entries(SCUMM_PREFIX_PATTERNS)) {
+    for (const re of patterns) {
+      if (re.test(baseName)) return cat;
+    }
+  }
 
   // Check each category's patterns against the combined path+name
   const scores = {};
