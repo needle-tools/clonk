@@ -1,10 +1,10 @@
 {
-  "name": "plonk",
+  "name": "klaudio",
   "version": "0.1.0",
   "description": "Add sound effects to your coding sessions — play sounds when tasks complete, notifications arrive, and more",
   "type": "module",
   "bin": {
-    "plonk": "./bin/cli.js"
+    "klaudio": "./bin/cli.js"
   },
   "files": [
     "bin/",

@@ -1,11 +1,11 @@
-# klonk
+# klaudio
 
 Add sound effects to your [Claude Code](https://docs.anthropic.com/en/docs/claude-code) sessions. Plays sounds when Claude finishes a task, sends a notification, and more.
 
 ## Quick Start
 
 ```bash
-npx klonk
+npx klaudio
 ```
 
 The interactive installer walks you through:
@@ -54,7 +54,7 @@ Point to your own `.wav`/`.mp3` files.
 ## Uninstall
 
 ```bash
-npx klonk --uninstall
+npx klaudio --uninstall
 ```
 
 ## Requirements
