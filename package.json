@@ -1,10 +1,10 @@
 {
-  "name": "clonk",
+  "name": "plonk",
   "version": "0.1.0",
   "description": "Add sound effects to your coding sessions — play sounds when tasks complete, notifications arrive, and more",
   "type": "module",
   "bin": {
-    "clonk": "./bin/cli.js"
+    "plonk": "./bin/cli.js"
   },
   "files": [
     "bin/",
@@ -18,7 +18,7 @@
     "build:all": "bun run build.js --all"
   },
   "keywords": [
-    "clonk",
+    "klonk",
     "sounds",
     "sfx",
     "hooks",

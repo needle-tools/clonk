@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# clonk installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/user/clonk/main/install.sh | bash
+# klonk installer
+# Usage: curl -fsSL https://raw.githubusercontent.com/user/klonk/main/install.sh | bash
 #
-# Runs the interactive clonk setup via npx.
+# Runs the interactive klonk setup via npx.
 # Requires Node.js 18+ (which Claude Code already requires).
 
 set -e
@@ -20,7 +20,7 @@ if [ "$NODE_VERSION" -lt 18 ]; then
 fi
 
 echo ""
-echo "  🔊 Installing Clonk..."
+echo "  🔊 Installing Klonk..."
 echo ""
 
-npx clonk "$@"
+npx klonk "$@"

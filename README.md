@@ -1,11 +1,11 @@
-# clonk
+# klonk
 
 Add sound effects to your [Claude Code](https://docs.anthropic.com/en/docs/claude-code) sessions. Plays sounds when Claude finishes a task, sends a notification, and more.
 
 ## Quick Start
 
 ```bash
-npx clonk
+npx klonk
 ```
 
 The interactive installer walks you through:
@@ -29,7 +29,7 @@ Scans your Steam and Epic Games libraries for audio files:
 - Extracts packed audio (Wwise `.wem`, FMOD `.bank`, `.fsb`) using [vgmstream](https://vgmstream.org/) (downloaded automatically)
 - Parses Wwise metadata (`SoundbanksInfo.json`) for descriptive filenames
 - Categorizes sounds (voice, ambient, music, SFX, UI, creature) for easy browsing
-- Caches extracted sounds in `~/.clonk/cache/` for instant reuse
+- Caches extracted sounds in `~/.klonk/cache/` for instant reuse
 
 ### Custom Files
 
@@ -54,7 +54,7 @@ Point to your own `.wav`/`.mp3` files.
 ## Uninstall
 
 ```bash
-npx clonk --uninstall
+npx klonk --uninstall
 ```
 
 ## Requirements
