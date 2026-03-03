@@ -57,17 +57,6 @@ Point to your own `.wav`/`.mp3` files.
 npx clonk --uninstall
 ```
 
-## Building Standalone Binaries
-
-Requires [Bun](https://bun.sh/):
-
-```bash
-bun run build          # build for current platform
-bun run build:all      # build for Windows, macOS (x64+ARM), Linux (x64+ARM)
-```
-
-Output goes to `dist/clonk-{platform}/` — distribute the whole folder (binary + `sounds/`).
-
 ## Requirements
 
 - Node.js 18+ (Claude Code already requires this)
