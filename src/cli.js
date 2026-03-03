@@ -555,7 +555,7 @@ const GameSoundsScreen = ({ game, sounds, onSelectSound, onDone, onBack }) => {
         if (prev) stopPlayback();
         return !prev;
       });
-    } else if (activeCategory !== null) {
+    } else if (activeCategory !== null || !showCategoryPicker) {
       if (key.backspace || key.delete) {
         setFilter((f) => f.slice(0, -1));
       } else if (input && input !== "p" && !key.ctrl && !key.meta && input.length === 1 && input.charCodeAt(0) >= 32) {
