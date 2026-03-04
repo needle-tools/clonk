@@ -154,6 +154,33 @@ function gameCacheDir(gameName) {
 }
 
 /**
+ * List all cached games with their files.
+ * Returns array of { gameName, files[] }.
+ */
+export async function listCachedGames() {
+  const games = [];
+  try {
+    const entries = await readdir(CACHE_DIR, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      try {
+        const manifest = JSON.parse(
+          await readFile(join(CACHE_DIR, entry.name, "manifest.json"), "utf-8")
+        );
+        if (manifest.files?.length > 0) {
+          // Verify at least one file still exists
+          try {
+            await stat(join(CACHE_DIR, entry.name, manifest.files[0].name));
+            games.push({ gameName: manifest.gameName, files: manifest.files });
+          } catch { /* files cleaned up, skip */ }
+        }
+      } catch { /* no manifest, skip */ }
+    }
+  } catch { /* cache dir doesn't exist */ }
+  return games;
+}
+
+/**
  * Check if we have a cached extraction for a game.
  * Returns the manifest if cached, null otherwise.
  */

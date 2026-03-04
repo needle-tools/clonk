@@ -14,7 +14,7 @@ const MEDIA_PLAYER_FORMATS = new Set([".wav", ".mp3", ".wma", ".aac"]);
 /**
  * Determine the best playback strategy for a file on the current OS.
  */
-function getPlaybackCommand(absPath, { withFade = false } = {}) {
+function getPlaybackCommand(absPath, { withFade = false, maxSeconds = MAX_PLAY_SECONDS } = {}) {
   const os = platform();
   const ext = extname(absPath).toLowerCase();
 
@@ -22,14 +22,14 @@ function getPlaybackCommand(absPath, { withFade = false } = {}) {
   const ffplayArgs = ["-nodisp", "-autoexit", "-loglevel", "quiet"];
   if (withFade) {
     // silenceremove strips leading silence (below -50dB threshold)
-    // afade fades out over last FADE_SECONDS before the MAX_PLAY_SECONDS cut
-    const fadeStart = MAX_PLAY_SECONDS - FADE_SECONDS;
+    // afade fades out over last FADE_SECONDS before the maxSeconds cut
+    const fadeStart = maxSeconds - FADE_SECONDS;
     const filters = [
       "silenceremove=start_periods=1:start_silence=0.1:start_threshold=-50dB",
       `afade=t=out:st=${fadeStart}:d=${FADE_SECONDS}`,
     ];
     ffplayArgs.push("-af", filters.join(","));
-    ffplayArgs.push("-t", String(MAX_PLAY_SECONDS));
+    ffplayArgs.push("-t", String(maxSeconds));
   }
   ffplayArgs.push(absPath);
 
@@ -197,9 +197,10 @@ export function playSound(filePath) {
  * Returns { promise, cancel } — call cancel() to stop playback immediately.
  * Playback is clamped to MAX_PLAY_SECONDS.
  */
-export function playSoundWithCancel(filePath) {
+export function playSoundWithCancel(filePath, { maxSeconds = MAX_PLAY_SECONDS } = {}) {
+  const uncapped = !maxSeconds;
   const absPath = resolve(filePath);
-  const strategy = getPlaybackCommand(absPath, { withFade: true });
+  const strategy = getPlaybackCommand(absPath, { withFade: !uncapped, maxSeconds });
   let childProcess = null;
   let timer = null;
   let cancelled = false;
@@ -234,48 +235,66 @@ export function playSoundWithCancel(filePath) {
     }
 
     function startExec(cmd, args) {
-      childProcess = execFile(cmd, args, { windowsHide: true, timeout: (MAX_PLAY_SECONDS + 2) * 1000 }, (err) => {
+      const execTimeout = uncapped ? 0 : (maxSeconds + 2) * 1000;
+      childProcess = execFile(cmd, args, { windowsHide: true, timeout: execTimeout }, (err) => {
         if (err && strategy.fallback && !cancelled) {
           if (strategy.fallback === "powershell") {
             childProcess = execFile(
               "powershell.exe",
-              ["-NoProfile", "-Command", buildPsCommand(absPath, MAX_PLAY_SECONDS)],
-              { windowsHide: true, timeout: (MAX_PLAY_SECONDS + 2) * 1000 },
+              ["-NoProfile", "-Command", buildPsCommand(absPath, uncapped ? 0 : maxSeconds)],
+              { windowsHide: true, timeout: execTimeout },
               (psErr) => onDone(psErr)
             );
           } else if (strategy.fallback === "afplay") {
             // macOS: ffplay not available, fall back to afplay (no fade)
-            childProcess = execFile("afplay", [absPath], { timeout: (MAX_PLAY_SECONDS + 2) * 1000 }, (afErr) => onDone(afErr));
+            childProcess = execFile("afplay", [absPath], { timeout: execTimeout }, (afErr) => onDone(afErr));
           }
         } else {
           onDone(err);
         }
       });
 
-      // Set a hard timeout to kill after MAX_PLAY_SECONDS
-      timer = setTimeout(() => {
-        killChild();
-        resolvePromise();
-      }, MAX_PLAY_SECONDS * 1000);
+      // Set a hard timeout to kill after maxSeconds (skip if uncapped)
+      if (!uncapped) {
+        timer = setTimeout(() => {
+          killChild();
+          resolvePromise();
+        }, maxSeconds * 1000);
+      }
     }
 
     if (strategy.type === "exec") {
       startExec(strategy.cmd, strategy.args);
     } else if (strategy.type === "powershell") {
+      const execTimeout = uncapped ? 0 : (maxSeconds + 2) * 1000;
       childProcess = execFile(
         "powershell.exe",
-        ["-NoProfile", "-Command", buildPsCommand(absPath, MAX_PLAY_SECONDS)],
-        { windowsHide: true, timeout: (MAX_PLAY_SECONDS + 2) * 1000 },
+        ["-NoProfile", "-Command", buildPsCommand(absPath, uncapped ? 0 : maxSeconds)],
+        { windowsHide: true, timeout: execTimeout },
         (err) => onDone(err)
       );
-      timer = setTimeout(() => {
-        killChild();
-        resolvePromise();
-      }, MAX_PLAY_SECONDS * 1000);
+      if (!uncapped) {
+        timer = setTimeout(() => {
+          killChild();
+          resolvePromise();
+        }, maxSeconds * 1000);
+      }
     }
   });
 
-  return { promise, cancel };
+  const pause = () => {
+    if (childProcess && !childProcess.killed && platform() !== "win32") {
+      try { process.kill(childProcess.pid, "SIGSTOP"); } catch { /* ignore */ }
+    }
+  };
+
+  const resume = () => {
+    if (childProcess && !childProcess.killed && platform() !== "win32") {
+      try { process.kill(childProcess.pid, "SIGCONT"); } catch { /* ignore */ }
+    }
+  };
+
+  return { promise, cancel, pause, resume };
 }
 
 /**

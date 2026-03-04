@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { render, Box, Text, useInput, useApp } from "ink";
 import Spinner from "ink-spinner";
 import { PRESETS, EVENTS } from "./presets.js";
@@ -8,7 +8,7 @@ import { install, uninstall, getExistingSounds } from "./installer.js";
 import { getVgmstreamPath, findPackedAudioFiles, extractToWav } from "./extractor.js";
 import { extractUnityResource } from "./unity.js";
 import { extractBunFile, isBunFile } from "./scumm.js";
-import { getCachedExtraction, cacheExtraction, categorizeLooseFiles, getCategories, sortFilesByPriority } from "./cache.js";
+import { getCachedExtraction, cacheExtraction, categorizeLooseFiles, getCategories, sortFilesByPriority, listCachedGames } from "./cache.js";
 import { basename, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -90,6 +90,9 @@ const SCREEN = {
   CONFIRM: 7,
   INSTALLING: 8,
   DONE: 9,
+  MUSIC_MODE: 10,
+  MUSIC_GAME_PICK: 11,
+  MUSIC_PLAYING: 12,
 };
 
 const isUninstallMode = process.argv.includes("--uninstall") || process.argv.includes("--remove");
@@ -112,15 +115,38 @@ const NavHint = ({ back = true, extra = "" }) =>
   );
 
 // ── Screen: Scope ───────────────────────────────────────────────
-const ScopeScreen = ({ onNext }) => {
+const ScopeScreen = ({ onNext, onMusic }) => {
   const items = [
     { label: "Global — Claude Code + Copilot (all projects)", value: "global" },
     { label: "This project — Claude Code + Copilot (this project only)", value: "project" },
+    // index 2 = music
+    { label: "🎵 Play game music while you code", value: "_music" },
   ];
+  const [sel, setSel] = useState(0);
+  const GAP_AT = 2; // visual gap before this index
+
+  useInput((input, key) => {
+    if (input === "k" || key.upArrow) {
+      setSel((i) => Math.max(0, i - 1));
+    } else if (input === "j" || key.downArrow) {
+      setSel((i) => Math.min(items.length - 1, i + 1));
+    } else if (key.return) {
+      const v = items[sel].value;
+      if (v === "_music") onMusic();
+      else onNext(v);
+    }
+  });
+
   return h(Box, { flexDirection: "column" },
     h(Text, { bold: true }, "  Where should sounds be installed?"),
-    h(Box, { marginLeft: 2 },
-      h(SelectInput, { indicatorComponent: Indicator, itemComponent: Item, items, onSelect: (item) => onNext(item.value) }),
+    h(Box, { flexDirection: "column", marginLeft: 2 },
+      ...items.map((item, i) => h(React.Fragment, { key: item.value },
+        i === GAP_AT ? h(Text, { dimColor: true }, "\n  ...or") : null,
+        h(Box, null,
+          h(Indicator, { isSelected: i === sel }),
+          h(Item, { isSelected: i === sel, label: item.label }),
+        ),
+      )),
     ),
   );
 };
@@ -450,13 +476,13 @@ const GameSoundsScreen = ({ game, sounds, onSelectSound, onDone, onBack }) => {
   const meaningfulCats = categories.filter((c) => c !== "all" && (counts[c] || 0) >= 2);
   const showCategoryPicker = meaningfulCats.length >= 2;
 
-  // Sort files: voice first, then by priority
-  const sortedFiles = hasCategories ? sortFilesByPriority(game.files) : game.files;
+  // Sort files: voice first, then by priority (memoized for stable references)
+  const sortedFiles = useMemo(() => hasCategories ? sortFilesByPriority(game.files) : game.files, [game.files, hasCategories]);
 
-  // Filter files by category (no hard cap — SelectInput handles visible window)
-  const categoryFiles = activeCategory && activeCategory !== "all"
+  // Filter files by category (memoized to prevent infinite re-render loops)
+  const categoryFiles = useMemo(() => activeCategory && activeCategory !== "all"
     ? sortedFiles.filter((f) => f.category === activeCategory)
-    : sortedFiles;
+    : sortedFiles, [sortedFiles, activeCategory]);
 
   // Stop current playback helper
   const stopPlayback = useCallback(() => {
@@ -803,6 +829,268 @@ const GameSoundsScreen = ({ game, sounds, onSelectSound, onDone, onBack }) => {
   );
 };
 
+// ── Helpers for Music Player ─────────────────────────────────────
+const formatTime = (secs) => {
+  const m = Math.floor(secs / 60);
+  const s = Math.floor(secs % 60);
+  return `${m}:${s.toString().padStart(2, "0")}`;
+};
+
+// ── Screen: Music Mode ──────────────────────────────────────────
+const MusicModeScreen = ({ onRandom, onPickGame, onBack }) => {
+  useInput((_, key) => { if (key.escape) onBack(); });
+
+  const items = [
+    { label: "🎲 Shuffle all  — play random songs from all cached games", value: "random" },
+    { label: "🎮 Play songs from game  — choose a game", value: "game" },
+  ];
+
+  return h(Box, { flexDirection: "column" },
+    h(Text, { bold: true, marginLeft: 2 }, "  🎵 Music Player"),
+    h(Text, { dimColor: true, marginLeft: 2 }, "  Play longer game tracks as background music"),
+    h(Box, { marginTop: 1, marginLeft: 2 },
+      h(SelectInput, { indicatorComponent: Indicator, itemComponent: Item, items,
+        onSelect: (item) => {
+          if (item.value === "random") onRandom();
+          else onPickGame();
+        },
+      }),
+    ),
+    h(NavHint, { back: true }),
+  );
+};
+
+// ── Screen: Music Game Pick ─────────────────────────────────────
+const MusicGamePickScreen = ({ onNext, onBack }) => {
+  const [games, setGames] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useInput((_, key) => { if (key.escape) onBack(); });
+
+  useEffect(() => {
+    let cancelled = false;
+    listCachedGames().then((cached) => {
+      if (!cancelled) {
+        setGames(cached);
+        setLoading(false);
+      }
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  if (loading) {
+    return h(Box, { flexDirection: "column" },
+      h(Box, { marginLeft: 2 },
+        h(Text, { color: ACCENT }, h(Spinner, { type: "dots" })),
+        h(Text, null, " Scanning cached games..."),
+      ),
+    );
+  }
+
+  if (games.length === 0) {
+    return h(Box, { flexDirection: "column" },
+      h(Text, { color: "yellow", marginLeft: 2 }, "  No cached games found."),
+      h(Text, { dimColor: true, marginLeft: 2 }, "  Use \"Scan local games\" first to extract game audio."),
+      h(NavHint, { back: true }),
+    );
+  }
+
+  const items = games.map((g) => ({
+    label: `${g.gameName}  (${g.files.length} files)`,
+    value: g.gameName,
+  }));
+
+  return h(Box, { flexDirection: "column" },
+    h(Text, { bold: true, marginLeft: 2 }, "  Pick a game:"),
+    h(Box, { marginLeft: 2 },
+      h(SelectInput, { indicatorComponent: Indicator, itemComponent: Item, items, limit: 15,
+        onSelect: (item) => {
+          const game = games.find((g) => g.gameName === item.value);
+          onNext(game);
+        },
+      }),
+    ),
+    h(NavHint, { back: true }),
+  );
+};
+
+// ── Screen: Music Playing ───────────────────────────────────────
+const MusicPlayingScreen = ({ files, gameName, shuffle: initialShuffle, onBack }) => {
+  const [track, setTrack] = useState(null);       // current track { path, name, displayName, duration }
+  const [loading, setLoading] = useState(true);
+  const [scanProgress, setScanProgress] = useState({ done: 0, total: files.length, found: 0 });
+  const [scanDone, setScanDone] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
+  const [poolSize, setPoolSize] = useState(0);
+  const cancelRef = useRef(null);
+  const pauseRef = useRef(null);
+  const resumeRef = useRef(null);
+  const versionRef = useRef(0);
+  const poolRef = useRef([]);       // ever-growing pool of qualifying tracks
+  const lastPlayedRef = useRef(-1); // index of last played track in pool
+
+  // Pick a random track from the pool (different from last played)
+  const pickFromPool = useCallback(() => {
+    const pool = poolRef.current;
+    if (pool.length === 0) return null;
+    if (pool.length === 1) return pool[0];
+    let idx;
+    do { idx = Math.floor(Math.random() * pool.length); } while (idx === lastPlayedRef.current && pool.length > 1);
+    lastPlayedRef.current = idx;
+    return pool[idx];
+  }, []);
+
+  // Scan files for duration (90s-4min), pick first random once found, keep scanning in background
+  const startedRef = useRef(false);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const BATCH = 20;
+      for (let i = 0; i < files.length; i += BATCH) {
+        if (cancelled) return;
+        const batch = files.slice(i, i + BATCH);
+        const results = await Promise.all(batch.map(async (f) => {
+          const dur = await getWavDuration(f.path);
+          return { ...f, duration: dur };
+        }));
+        for (const r of results) {
+          if (r.duration != null && r.duration >= 90 && r.duration <= 240) {
+            poolRef.current.push(r);
+          }
+        }
+        const found = poolRef.current.length;
+        setScanProgress({ done: Math.min(i + BATCH, files.length), total: files.length, found });
+        setPoolSize(found);
+        // Start playing the first time we find a qualifying track
+        if (found >= 1 && !startedRef.current && !cancelled) {
+          startedRef.current = true;
+          setTrack(pickFromPool());
+          setLoading(false);
+        }
+      }
+      if (!cancelled) {
+        setScanDone(true);
+        setPoolSize(poolRef.current.length);
+        if (!startedRef.current) {
+          startedRef.current = true;
+          if (poolRef.current.length > 0) {
+            setTrack(pickFromPool());
+          }
+          setLoading(false);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Play current track
+  useEffect(() => {
+    if (!track) return;
+
+    const myVersion = ++versionRef.current;
+    const { promise, cancel, pause, resume } = playSoundWithCancel(track.path, { maxSeconds: 0 });
+    cancelRef.current = cancel;
+    pauseRef.current = pause;
+    resumeRef.current = resume;
+    setPlaying(true);
+    setPaused(false);
+    setElapsed(0);
+
+    promise.then(() => {
+      if (versionRef.current === myVersion) {
+        // Track ended naturally — pick next random from pool
+        const next = pickFromPool();
+        if (next) setTrack(next);
+      }
+    }).catch(() => {});
+
+    return () => cancel();
+  }, [track]);
+
+  // Elapsed timer
+  useEffect(() => {
+    if (!playing || paused) return;
+    const interval = setInterval(() => setElapsed((e) => e + 1), 1000);
+    return () => clearInterval(interval);
+  }, [playing, paused]);
+
+  // Controls
+  useInput((input, key) => {
+    if (key.escape) {
+      if (cancelRef.current) cancelRef.current();
+      onBack();
+    } else if (input === "n") {
+      versionRef.current++;
+      if (cancelRef.current) cancelRef.current();
+      const next = pickFromPool();
+      if (next) setTrack(next);
+    } else if (input === " ") {
+      if (paused) {
+        if (resumeRef.current) resumeRef.current();
+        setPaused(false);
+      } else {
+        if (pauseRef.current) pauseRef.current();
+        setPaused(true);
+      }
+    }
+  });
+
+  // Loading state
+  if (loading) {
+    return h(Box, { flexDirection: "column" },
+      h(Box, { marginLeft: 2, flexDirection: "column", borderStyle: "round", borderColor: ACCENT, paddingX: 2 },
+        h(Text, { bold: true, color: ACCENT }, `🎵 ${gameName || "Music Player"}`),
+        h(Box, { marginTop: 1 },
+          h(Text, { color: ACCENT }, h(Spinner, { type: "dots" })),
+          h(Text, null, ` Scanning for music tracks... ${scanProgress.found} found (${scanProgress.done}/${scanProgress.total})`),
+        ),
+      ),
+      h(NavHint, { back: true }),
+    );
+  }
+
+  if (!track) {
+    return h(Box, { flexDirection: "column" },
+      h(Text, { color: "yellow", marginLeft: 2 }, "  No tracks between 90s–4min found."),
+      h(Text, { dimColor: true, marginLeft: 2 }, "  Try a different game or source."),
+      h(NavHint, { back: true }),
+    );
+  }
+
+  const trackName = track.displayName || track.name || basename(track.path);
+
+  return h(Box, { flexDirection: "column" },
+    h(Box, { marginLeft: 2, flexDirection: "column", borderStyle: "round", borderColor: paused ? "yellow" : "green", paddingX: 2 },
+      h(Text, { bold: true, color: paused ? "yellow" : "green" }, `🎵 ${gameName || "Music Player"}`),
+      h(Box, { marginTop: 1 },
+        h(Text, { color: paused ? "yellow" : "green", bold: true },
+          paused ? "⏸ " : "▶ ",
+        ),
+        h(Text, { bold: true }, trackName),
+      ),
+      track.gameName
+        ? h(Text, { dimColor: true }, `  ${track.gameName}`)
+        : null,
+      h(Text, { dimColor: true },
+        `  ${formatTime(elapsed)} / ${formatTime(track.duration || 0)}`,
+      ),
+    ),
+    h(Box, { marginTop: 1, marginLeft: 4 },
+      scanDone
+        ? h(Text, { dimColor: true }, `${poolSize} music tracks indexed`)
+        : h(Box, null,
+            h(Text, { color: ACCENT }, h(Spinner, { type: "dots" })),
+            h(Text, { dimColor: true }, ` ${poolSize} music tracks indexed (${scanProgress.done}/${scanProgress.total} scanned)`),
+          ),
+    ),
+    h(Box, { marginTop: 1, marginLeft: 4 },
+      h(Text, { dimColor: true }, "n next  space pause  esc back"),
+    ),
+  );
+};
+
 // ── Screen: Extracting ──────────────────────────────────────────
 const ExtractingScreen = ({ game, onDone, onBack }) => {
   const [status, setStatus] = useState("Checking cache...");
@@ -1101,6 +1389,9 @@ const InstallApp = () => {
   const [sounds, setSounds] = useState({});
   const [selectedGame, setSelectedGame] = useState(null);
   const [installResult, setInstallResult] = useState(null);
+  const [musicFiles, setMusicFiles] = useState([]);
+  const [musicGameName, setMusicGameName] = useState(null);
+  const [musicShuffle, setMusicShuffle] = useState(false);
 
   const initSoundsFromPreset = useCallback((pid) => {
     const preset = PRESETS[pid];
@@ -1118,12 +1409,15 @@ const InstallApp = () => {
             });
             setScreen(SCREEN.PRESET);
           },
+          onMusic: () => setScreen(SCREEN.MUSIC_MODE),
         });
 
       case SCREEN.PRESET:
         return h(PresetScreen, {
           onNext: (id) => {
-            if (id === "_scan") {
+            if (id === "_music") {
+              setScreen(SCREEN.MUSIC_MODE);
+            } else if (id === "_scan") {
               setScreen(SCREEN.GAME_PICK);
             } else if (id === "_custom") {
               const firstPreset = Object.keys(PRESETS)[0];
@@ -1231,6 +1525,40 @@ const InstallApp = () => {
 
       case SCREEN.DONE:
         return h(DoneScreen, { result: installResult });
+
+      case SCREEN.MUSIC_MODE:
+        return h(MusicModeScreen, {
+          onRandom: () => {
+            listCachedGames().then((games) => {
+              const allFiles = games.flatMap((g) => g.files.map((f) => ({ ...f, gameName: g.gameName })));
+              setMusicFiles(allFiles);
+              setMusicGameName("All Games");
+              setMusicShuffle(true);
+              setScreen(SCREEN.MUSIC_PLAYING);
+            });
+          },
+          onPickGame: () => setScreen(SCREEN.MUSIC_GAME_PICK),
+          onBack: () => setScreen(SCREEN.SCOPE),
+        });
+
+      case SCREEN.MUSIC_GAME_PICK:
+        return h(MusicGamePickScreen, {
+          onNext: (game) => {
+            setMusicFiles(game.files);
+            setMusicGameName(game.gameName);
+            setMusicShuffle(false);
+            setScreen(SCREEN.MUSIC_PLAYING);
+          },
+          onBack: () => setScreen(SCREEN.MUSIC_MODE),
+        });
+
+      case SCREEN.MUSIC_PLAYING:
+        return h(MusicPlayingScreen, {
+          files: musicFiles,
+          gameName: musicGameName,
+          shuffle: musicShuffle,
+          onBack: () => setScreen(SCREEN.MUSIC_MODE),
+        });
 
       default:
         return h(Text, { color: "red" }, "Unknown screen");

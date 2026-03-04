@@ -10,7 +10,7 @@ npx klaudio
 
 The interactive installer walks you through:
 
-1. **Choose scope** — install globally (`~/.claude`) or per-project (`.claude/`)
+1. **Choose scope** — install globally (`~/.claude`) or per-project (`.claude/`), or launch the **Music Player**
 2. **Pick a source** — use a built-in preset, scan your Steam & Epic Games library for sounds, or provide custom files
 3. **Preview & assign** — listen to sounds and assign them to events (tab to switch between events)
 4. **Install** — writes Claude Code hooks to your `settings.json`
@@ -35,6 +35,17 @@ Scans your local Steam and Epic Games libraries for audio files:
 ### Custom Files
 
 Point to your own `.wav`/`.mp3` files.
+
+## Music Player
+
+Play longer game tracks (90s–4min) as background music while you code:
+
+- **Shuffle all** — scans all cached game audio, filters by duration, picks random tracks continuously
+- **Play songs from game** — pick a specific cached game and play its music
+- Controls: `n` next, `space` pause/resume, `esc` back
+- Background scanning — starts playing as soon as the first track is found, keeps indexing
+
+Requires previously extracted game audio (use "Scan local games" first).
 
 ## Features
 
