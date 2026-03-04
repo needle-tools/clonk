@@ -57,7 +57,7 @@ Requires previously extracted game audio (use "Scan local games" first).
 When enabled, klaudio speaks a short summary of what Claude did after playing the task-complete sound. Uses [Piper](https://github.com/rhasspy/piper) for fast, offline neural text-to-speech (auto-downloaded on first use, ~40MB total).
 
 - Toggle with `t` on the scope or confirm screen
-- Reads the first sentence of Claude's last message
+- Reads the first 1–2 sentences of Claude's last message (up to ~25 words), preserving version numbers and filenames
 - Uses the `en_GB-alan-medium` voice (British male)
 - Hooks receive data via stdin from Claude Code — no extra setup needed
 
