@@ -43,7 +43,7 @@ Point to your own `.wav`/`.mp3` files.
 
 ## Music Player
 
-Play longer game tracks (90s–4min) as background music while you code:
+Play longer game tracks (30s–10min) as background music while you code:
 
 - **Shuffle all** — scans all cached game audio, filters by duration, picks random tracks continuously
 - **Play songs from game** — pick a specific cached game and play its music

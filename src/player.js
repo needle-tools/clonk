@@ -208,8 +208,9 @@ export function playSoundWithCancel(filePath, { maxSeconds = MAX_PLAY_SECONDS } 
   function killChild() {
     if (childProcess && !childProcess.killed) {
       try {
-        // On Windows, spawned processes need taskkill for the process tree
         if (platform() === "win32") {
+          // Kill via Node handle first (immediate), then taskkill for child processes
+          try { childProcess.kill(); } catch { /* ignore */ }
           spawn("taskkill", ["/pid", String(childProcess.pid), "/f", "/t"], {
             stdio: "ignore", windowsHide: true,
           });

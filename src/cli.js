@@ -102,6 +102,7 @@ const SCREEN = {
   MUSIC_MODE: 10,
   MUSIC_GAME_PICK: 11,
   MUSIC_PLAYING: 12,
+  MUSIC_EXTRACTING: 13,
 };
 
 const isUninstallMode = process.argv.includes("--uninstall") || process.argv.includes("--remove");
@@ -930,53 +931,83 @@ const MusicModeScreen = ({ onRandom, onPickGame, onBack }) => {
   );
 };
 
-// ── Screen: Music Game Pick ─────────────────────────────────────
-const MusicGamePickScreen = ({ onNext, onBack }) => {
+// ── Screen: Music Game Pick (scans all installed games) ─────────
+const MusicGamePickScreen = ({ onNext, onExtract, onBack }) => {
   const [games, setGames] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [scanning, setScanning] = useState(true);
+  const [scanStatus, setScanStatus] = useState("Discovering game directories...");
 
   useInput((_, key) => { if (key.escape) onBack(); });
 
   useEffect(() => {
     let cancelled = false;
-    listCachedGames().then((cached) => {
-      if (!cancelled) {
-        setGames(cached);
-        setLoading(false);
-      }
+    getAvailableGames(
+      (progress) => {
+        if (cancelled) return;
+        if (progress.phase === "dirs") {
+          setScanStatus(`Scanning ${progress.dirs.length} directories...`);
+        } else if (progress.phase === "scanning") {
+          setScanStatus(`Scanning: ${progress.game}`);
+        }
+      },
+      (game) => {
+        if (cancelled) return;
+        if (!game.hasAudio && !game.canExtract) return; // skip games with no audio
+        setGames((prev) => {
+          if (prev.some((g) => g.name === game.name)) return prev;
+          const next = [...prev, game];
+          next.sort((a, b) => {
+            if (a.hasAudio !== b.hasAudio) return a.hasAudio ? -1 : 1;
+            if (a.canExtract !== b.canExtract) return a.canExtract ? -1 : 1;
+            return a.name.localeCompare(b.name);
+          });
+          return next;
+        });
+      },
+    ).then(() => {
+      if (!cancelled) setScanning(false);
+    }).catch(() => {
+      if (!cancelled) setScanning(false);
     });
     return () => { cancelled = true; };
   }, []);
 
-  if (loading) {
+  if (scanning && games.length === 0) {
     return h(Box, { flexDirection: "column" },
       h(Box, { marginLeft: 2 },
         h(Text, { color: ACCENT }, h(Spinner, { type: "dots" })),
-        h(Text, null, " Scanning cached games..."),
+        h(Text, null, ` ${scanStatus}`),
       ),
     );
   }
 
-  if (games.length === 0) {
+  if (!scanning && games.length === 0) {
     return h(Box, { flexDirection: "column" },
-      h(Text, { color: "yellow", marginLeft: 2 }, "  No cached games found."),
-      h(Text, { dimColor: true, marginLeft: 2 }, "  Use \"Scan local games\" first to extract game audio."),
+      h(Text, { color: "yellow", marginLeft: 2 }, "  No games with audio found."),
       h(NavHint, { back: true }),
     );
   }
 
-  const items = games.map((g) => ({
-    label: `${g.gameName}  (${g.files.length} files)`,
-    value: g.gameName,
-  }));
+  const items = games.map((g) => {
+    const info = g.hasAudio ? `${g.fileCount} audio` : g.canExtract ? `${g.packedAudioCount + (g.unityAudioCount || 0)} packed` : "";
+    return { label: `${g.name}${info ? `  (${info})` : ""}`, value: g.name };
+  });
 
   return h(Box, { flexDirection: "column" },
     h(Text, { bold: true, marginLeft: 2 }, "  Pick a game:"),
+    scanning ? h(Box, { marginLeft: 2 },
+      h(Text, { color: ACCENT }, h(Spinner, { type: "dots" })),
+      h(Text, { dimColor: true }, ` ${scanStatus} (${games.length} games found)`),
+    ) : null,
     h(Box, { marginLeft: 2 },
       h(SelectInput, { indicatorComponent: Indicator, itemComponent: Item, items, limit: 15,
         onSelect: (item) => {
-          const game = games.find((g) => g.gameName === item.value);
-          onNext(game);
+          const game = games.find((g) => g.name === item.value);
+          if (game?.hasAudio) {
+            onNext(game);
+          } else {
+            onExtract(game);
+          }
         },
       }),
     ),
@@ -993,26 +1024,24 @@ const MusicPlayingScreen = ({ files, gameName, shuffle: initialShuffle, onBack }
   const [playing, setPlaying] = useState(false);
   const [paused, setPaused] = useState(false);
   const [elapsed, setElapsed] = useState(0);
-  const [poolSize, setPoolSize] = useState(0);
+  const [pool, setPool] = useState([]);
   const cancelRef = useRef(null);
   const pauseRef = useRef(null);
   const resumeRef = useRef(null);
   const versionRef = useRef(0);
   const poolRef = useRef([]);       // ever-growing pool of qualifying tracks
-  const lastPlayedRef = useRef(-1); // index of last played track in pool
 
-  // Pick a random track from the pool (different from last played)
-  const pickFromPool = useCallback(() => {
-    const pool = poolRef.current;
-    if (pool.length === 0) return null;
-    if (pool.length === 1) return pool[0];
-    let idx;
-    do { idx = Math.floor(Math.random() * pool.length); } while (idx === lastPlayedRef.current && pool.length > 1);
-    lastPlayedRef.current = idx;
-    return pool[idx];
+  // Pick a random track from the pool (different from current)
+  const pickRandom = useCallback((currentTrack) => {
+    const p = poolRef.current;
+    if (p.length === 0) return null;
+    if (p.length === 1) return p[0];
+    let pick;
+    do { pick = p[Math.floor(Math.random() * p.length)]; } while (pick === currentTrack && p.length > 1);
+    return pick;
   }, []);
 
-  // Scan files for duration (90s-4min), pick first random once found, keep scanning in background
+  // Scan files for duration, pick first random once found, keep scanning in background
   const startedRef = useRef(false);
   useEffect(() => {
     let cancelled = false;
@@ -1026,27 +1055,27 @@ const MusicPlayingScreen = ({ files, gameName, shuffle: initialShuffle, onBack }
           return { ...f, duration: dur };
         }));
         for (const r of results) {
-          if (r.duration != null && r.duration >= 90 && r.duration <= 240) {
+          if (r.duration != null && r.duration >= 30 && r.duration <= 600) {
             poolRef.current.push(r);
           }
         }
         const found = poolRef.current.length;
         setScanProgress({ done: Math.min(i + BATCH, files.length), total: files.length, found });
-        setPoolSize(found);
+        setPool([...poolRef.current]);
         // Start playing the first time we find a qualifying track
         if (found >= 1 && !startedRef.current && !cancelled) {
           startedRef.current = true;
-          setTrack(pickFromPool());
+          setTrack(pickRandom(null));
           setLoading(false);
         }
       }
       if (!cancelled) {
         setScanDone(true);
-        setPoolSize(poolRef.current.length);
+        setPool([...poolRef.current]);
         if (!startedRef.current) {
           startedRef.current = true;
           if (poolRef.current.length > 0) {
-            setTrack(pickFromPool());
+            setTrack(pickRandom(null));
           }
           setLoading(false);
         }
@@ -1070,8 +1099,7 @@ const MusicPlayingScreen = ({ files, gameName, shuffle: initialShuffle, onBack }
 
     promise.then(() => {
       if (versionRef.current === myVersion) {
-        // Track ended naturally — pick next random from pool
-        const next = pickFromPool();
+        const next = pickRandom(track);
         if (next) setTrack(next);
       }
     }).catch(() => {});
@@ -1094,7 +1122,7 @@ const MusicPlayingScreen = ({ files, gameName, shuffle: initialShuffle, onBack }
     } else if (input === "n") {
       versionRef.current++;
       if (cancelRef.current) cancelRef.current();
-      const next = pickFromPool();
+      const next = pickRandom(track);
       if (next) setTrack(next);
     } else if (input === " ") {
       if (paused) {
@@ -1123,13 +1151,24 @@ const MusicPlayingScreen = ({ files, gameName, shuffle: initialShuffle, onBack }
 
   if (!track) {
     return h(Box, { flexDirection: "column" },
-      h(Text, { color: "yellow", marginLeft: 2 }, "  No tracks between 90s–4min found."),
+      h(Text, { color: "yellow", marginLeft: 2 }, "  No tracks between 30s–10min found."),
       h(Text, { dimColor: true, marginLeft: 2 }, "  Try a different game or source."),
       h(NavHint, { back: true }),
     );
   }
 
   const trackName = track.displayName || track.name || basename(track.path);
+
+  // Build playlist items — highlight currently playing track
+  const playlistItems = pool.map((t) => {
+    const name = t.displayName || t.name || basename(t.path);
+    const durStr = t.duration ? ` (${formatTime(t.duration)})` : "";
+    const isPlaying = t.path === track.path;
+    return {
+      label: `${isPlaying ? "▶ " : "  "}${name}${durStr}`,
+      value: t.path,
+    };
+  });
 
   return h(Box, { flexDirection: "column" },
     h(Box, { marginLeft: 2, flexDirection: "column", borderStyle: "round", borderColor: paused ? "yellow" : "green", paddingX: 2 },
@@ -1147,16 +1186,28 @@ const MusicPlayingScreen = ({ files, gameName, shuffle: initialShuffle, onBack }
         `  ${formatTime(elapsed)} / ${formatTime(track.duration || 0)}`,
       ),
     ),
-    h(Box, { marginTop: 1, marginLeft: 4 },
+    h(Box, { marginTop: 1, marginLeft: 2 },
       scanDone
-        ? h(Text, { dimColor: true }, `${poolSize} music tracks indexed`)
+        ? h(Text, { dimColor: true }, `  ${pool.length} tracks`)
         : h(Box, null,
             h(Text, { color: ACCENT }, h(Spinner, { type: "dots" })),
-            h(Text, { dimColor: true }, ` ${poolSize} music tracks indexed (${scanProgress.done}/${scanProgress.total} scanned)`),
+            h(Text, { dimColor: true }, ` ${pool.length} tracks (${scanProgress.done}/${scanProgress.total} scanned)`),
           ),
     ),
-    h(Box, { marginTop: 1, marginLeft: 4 },
-      h(Text, { dimColor: true }, "n next  space pause  esc back"),
+    h(Box, { marginLeft: 2 },
+      h(SelectInput, { indicatorComponent: Indicator, itemComponent: Item, items: playlistItems, limit: 12,
+        onSelect: (item) => {
+          const picked = poolRef.current.find((t) => t.path === item.value);
+          if (picked) {
+            versionRef.current++;
+            if (cancelRef.current) cancelRef.current();
+            setTrack(picked);
+          }
+        },
+      }),
+    ),
+    h(Box, { marginLeft: 4 },
+      h(Text, { dimColor: true }, "n random  space pause  esc back"),
     ),
   );
 };
@@ -1637,10 +1688,14 @@ const InstallApp = () => {
       case SCREEN.MUSIC_GAME_PICK:
         return h(MusicGamePickScreen, {
           onNext: (game) => {
-            setMusicFiles(game.files);
-            setMusicGameName(game.gameName);
+            setMusicFiles(game.files.map((f) => ({ ...f, gameName: game.name })));
+            setMusicGameName(game.name);
             setMusicShuffle(false);
             setScreen(SCREEN.MUSIC_PLAYING);
+          },
+          onExtract: (game) => {
+            setSelectedGame(game);
+            setScreen(SCREEN.MUSIC_EXTRACTING);
           },
           onBack: () => setScreen(SCREEN.MUSIC_MODE),
         });
@@ -1651,6 +1706,23 @@ const InstallApp = () => {
           gameName: musicGameName,
           shuffle: musicShuffle,
           onBack: () => setScreen(SCREEN.MUSIC_MODE),
+        });
+
+      case SCREEN.MUSIC_EXTRACTING:
+        return h(ExtractingScreen, {
+          game: selectedGame,
+          onDone: (result) => {
+            if (result.error || result.files.length === 0) {
+              setScreen(SCREEN.MUSIC_GAME_PICK);
+            } else {
+              // Go straight to playing the extracted files
+              setMusicFiles(result.files.map((f) => ({ ...f, gameName: selectedGame.name })));
+              setMusicGameName(selectedGame.name);
+              setMusicShuffle(true);
+              setScreen(SCREEN.MUSIC_PLAYING);
+            }
+          },
+          onBack: () => setScreen(SCREEN.MUSIC_GAME_PICK),
         });
 
       default:
