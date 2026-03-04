@@ -39,8 +39,17 @@ const SelectInput = ({ items = [], isFocused = true, initialIndex = 0, indicator
     const prevValues = previousItems.current.map((i) => i.value);
     const curValues = items.map((i) => i.value);
     if (prevValues.length !== curValues.length || prevValues.some((v, i) => v !== curValues[i])) {
-      setScrollOffset(0);
-      setSelectedIndex(0);
+      // Try to keep the currently selected item highlighted
+      const prevSelected = previousItems.current[selectedIndex];
+      const newIdx = prevSelected ? items.findIndex((i) => i.value === prevSelected.value) : -1;
+      if (newIdx >= 0) {
+        setSelectedIndex(newIdx);
+        setScrollOffset(hasLimit ? Math.max(0, Math.min(newIdx, items.length - limit)) : 0);
+      } else {
+        // Selected item gone — reset to top
+        setScrollOffset(0);
+        setSelectedIndex(0);
+      }
     }
     previousItems.current = items;
   }, [items]);
@@ -115,7 +124,7 @@ const NavHint = ({ back = true, extra = "" }) =>
   );
 
 // ── Screen: Scope ───────────────────────────────────────────────
-const ScopeScreen = ({ onNext, onMusic }) => {
+const ScopeScreen = ({ onNext, onMusic, tts, onToggleTts }) => {
   const items = [
     { label: "Global — Claude Code + Copilot (all projects)", value: "global" },
     { label: "This project — Claude Code + Copilot (this project only)", value: "project" },
@@ -130,6 +139,8 @@ const ScopeScreen = ({ onNext, onMusic }) => {
       setSel((i) => Math.max(0, i - 1));
     } else if (input === "j" || key.downArrow) {
       setSel((i) => Math.min(items.length - 1, i + 1));
+    } else if (input === "t") {
+      onToggleTts();
     } else if (key.return) {
       const v = items[sel].value;
       if (v === "_music") onMusic();
@@ -148,27 +159,47 @@ const ScopeScreen = ({ onNext, onMusic }) => {
         ),
       )),
     ),
+    h(Box, { marginTop: 1, marginLeft: 4 },
+      h(Text, { color: tts ? "green" : "gray" },
+        tts ? "🗣 Voice summary: ON" : "🗣 Voice summary: OFF",
+      ),
+      h(Text, { dimColor: true }, "  (t to toggle)"),
+    ),
   );
 };
 
 // ── Screen: Preset ──────────────────────────────────────────────
 const PresetScreen = ({ onNext, onBack }) => {
-  useInput((_, key) => { if (key.escape) onBack(); });
-
   const items = [
     ...Object.entries(PRESETS).map(([id, p]) => ({
       label: `${p.icon} ${p.name}  — ${p.description}`,
       value: id,
     })),
+    // separator before these
     { label: "🔔 System sounds  — use built-in OS notification sounds", value: "_system" },
-    { label: "🕹️  Scan local games  — find sounds from your Steam & Epic Games library", value: "_scan" },
+    { label: "🕹️  Scan your games library  — find sounds from Steam & Epic Games", value: "_scan" },
     { label: "📁 Custom files  — provide your own sound files", value: "_custom" },
   ];
+  const GAP_AT = Object.keys(PRESETS).length; // separator before non-preset options
+  const [sel, setSel] = useState(0);
+
+  useInput((input, key) => {
+    if (key.escape) onBack();
+    else if (input === "k" || key.upArrow) setSel((i) => Math.max(0, i - 1));
+    else if (input === "j" || key.downArrow) setSel((i) => Math.min(items.length - 1, i + 1));
+    else if (key.return) onNext(items[sel].value);
+  });
 
   return h(Box, { flexDirection: "column" },
     h(Text, { bold: true }, "  Choose a sound preset:"),
-    h(Box, { marginLeft: 2 },
-      h(SelectInput, { indicatorComponent: Indicator, itemComponent: Item, items, onSelect: (item) => onNext(item.value) }),
+    h(Box, { flexDirection: "column", marginLeft: 2 },
+      ...items.map((item, i) => h(React.Fragment, { key: item.value },
+        i === GAP_AT ? h(Text, { dimColor: true }, "\n  ...or pick your own") : null,
+        h(Box, null,
+          h(Indicator, { isSelected: i === sel }),
+          h(Item, { isSelected: i === sel, label: item.label }),
+        ),
+      )),
     ),
     h(NavHint, { back: true }),
   );
@@ -601,6 +632,16 @@ const GameSoundsScreen = ({ game, sounds, onSelectSound, onDone, onBack }) => {
     return () => clearInterval(interval);
   }, [playing]);
 
+  // Parse duration filter: "10s", "<10s", "< 10s", ">5s", "> 5s", "<=10s", ">=5s"
+  // (must be before early returns to satisfy React hook rules)
+  const durationFilter = useMemo(() => {
+    const m = filter.match(/^\s*(<|>|<=|>=)?\s*(\d+(?:\.\d+)?)\s*s\s*$/);
+    if (!m) return null;
+    const op = m[1] || "<=";
+    const val = parseFloat(m[2]);
+    return { op, val };
+  }, [filter]);
+
   const eventId = eventIds[currentEvent];
   const eventInfo = EVENTS[eventId];
   const stepLabel = `(${currentEvent + 1}/${eventIds.length})`;
@@ -758,15 +799,6 @@ const GameSoundsScreen = ({ game, sounds, onSelectSound, onDone, onBack }) => {
 
   // Phase 1: Browse and pick files (auto-preview plays on highlight)
   const filterLower = filter.toLowerCase();
-
-  // Parse duration filter: "10s", "<10s", "< 10s", ">5s", "> 5s", "<=10s", ">=5s"
-  const durationFilter = useMemo(() => {
-    const m = filter.match(/^\s*(<|>|<=|>=)?\s*(\d+(?:\.\d+)?)\s*s\s*$/);
-    if (!m) return null;
-    const op = m[1] || "<=";
-    const val = parseFloat(m[2]);
-    return { op, val };
-  }, [filter]);
 
   const allFileItems = categoryFiles.map((f) => {
     const dur = fileDurations[f.path];
@@ -1270,8 +1302,11 @@ const ExtractingScreen = ({ game, onDone, onBack }) => {
 };
 
 // ── Screen: Confirm ─────────────────────────────────────────────
-const ConfirmScreen = ({ scope, sounds, onConfirm, onBack }) => {
-  useInput((_, key) => { if (key.escape) onBack(); });
+const ConfirmScreen = ({ scope, sounds, tts, onToggleTts, onConfirm, onBack }) => {
+  useInput((input, key) => {
+    if (key.escape) onBack();
+    else if (input === "t") onToggleTts();
+  });
 
   const items = [
     { label: "✓  Yes, install!", value: "yes" },
@@ -1289,6 +1324,12 @@ const ConfirmScreen = ({ scope, sounds, onConfirm, onBack }) => {
           `${EVENTS[eid].name} → ${basename(path)}`
         )
       ),
+      h(Box, { marginLeft: 4, marginTop: 1 },
+        h(Text, { color: tts ? "green" : "gray" },
+          tts ? "🗣 Voice summary: ON" : "🗣 Voice summary: OFF",
+        ),
+        h(Text, { dimColor: true }, "  (t to toggle — reads a short summary when tasks complete)"),
+      ),
     ),
     h(Box, { marginTop: 1, marginLeft: 2 },
       h(SelectInput, { indicatorComponent: Indicator, itemComponent: Item, items, onSelect: (item) => {
@@ -1301,13 +1342,13 @@ const ConfirmScreen = ({ scope, sounds, onConfirm, onBack }) => {
 };
 
 // ── Screen: Installing ──────────────────────────────────────────
-const InstallingScreen = ({ scope, sounds, onDone }) => {
+const InstallingScreen = ({ scope, sounds, tts, onDone }) => {
   useEffect(() => {
     const validSounds = {};
     for (const [eventId, path] of Object.entries(sounds)) {
       if (path) validSounds[eventId] = path;
     }
-    install({ scope, sounds: validSounds }).then(onDone).catch((err) => {
+    install({ scope, sounds: validSounds, tts }).then(onDone).catch((err) => {
       onDone({ error: err.message });
     });
   }, []);
@@ -1411,6 +1452,7 @@ const InstallApp = () => {
   const [sounds, setSounds] = useState({});
   const [selectedGame, setSelectedGame] = useState(null);
   const [installResult, setInstallResult] = useState(null);
+  const [tts, setTts] = useState(true);
   const [musicFiles, setMusicFiles] = useState([]);
   const [musicGameName, setMusicGameName] = useState(null);
   const [musicShuffle, setMusicShuffle] = useState(false);
@@ -1424,6 +1466,8 @@ const InstallApp = () => {
     switch (screen) {
       case SCREEN.SCOPE:
         return h(ScopeScreen, {
+          tts,
+          onToggleTts: () => setTts((v) => !v),
           onNext: (s) => {
             setScope(s);
             getExistingSounds(s).then((existing) => {
@@ -1534,6 +1578,8 @@ const InstallApp = () => {
         return h(ConfirmScreen, {
           scope,
           sounds,
+          tts,
+          onToggleTts: () => setTts((v) => !v),
           onConfirm: () => setScreen(SCREEN.INSTALLING),
           onBack: () => {
             if (selectedGame) setScreen(SCREEN.GAME_SOUNDS);
@@ -1545,6 +1591,7 @@ const InstallApp = () => {
         return h(InstallingScreen, {
           scope,
           sounds,
+          tts,
           onDone: (result) => {
             setInstallResult(result);
             setScreen(SCREEN.DONE);

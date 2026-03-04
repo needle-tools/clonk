@@ -20,8 +20,9 @@ function getTargetDir(scope) {
  * @param {object} options
  * @param {string} options.scope - "global" or "project"
  * @param {Record<string, string>} options.sounds - Map of event ID -> source sound file path
+ * @param {boolean} [options.tts] - Enable TTS voice summary on task complete
  */
-export async function install({ scope, sounds }) {
+export async function install({ scope, sounds, tts = false }) {
   const claudeDir = getTargetDir(scope);
   const soundsDir = join(claudeDir, "sounds");
   const settingsFile = join(claudeDir, "settings.json");
@@ -60,7 +61,9 @@ export async function install({ scope, sounds }) {
     if (!event) continue;
 
     const hookEvent = event.hookEvent;
-    const playCommand = getHookPlayCommand(soundPath);
+    // Enable TTS only for the "stop" event (task complete)
+    const useTts = tts && eventId === "stop";
+    const playCommand = getHookPlayCommand(soundPath, { tts: useTts });
 
     // Check if there's already a klaudio hook for this event
     if (!settings.hooks[hookEvent]) {

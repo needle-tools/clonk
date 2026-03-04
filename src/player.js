@@ -363,16 +363,52 @@ export async function processSound(filePath) {
 }
 
 /**
+ * Handle the "play" subcommand: play a sound file and optionally speak a TTS summary.
+ * Reads hook JSON from stdin to get last_assistant_message for TTS.
+ */
+export async function handlePlayCommand(args) {
+  const soundFile = args.find((a) => !a.startsWith("-"));
+  const tts = args.includes("--tts");
+
+  // Read stdin (hook JSON) non-blocking
+  let hookData = {};
+  try {
+    const chunks = [];
+    process.stdin.setEncoding("utf-8");
+    // Read whatever is available with a short timeout
+    const stdinData = await new Promise((res) => {
+      const timer = setTimeout(() => { process.stdin.pause(); res(chunks.join("")); }, 500);
+      process.stdin.on("data", (chunk) => chunks.push(chunk));
+      process.stdin.on("end", () => { clearTimeout(timer); res(chunks.join("")); });
+      process.stdin.resume();
+    });
+    if (stdinData.trim()) hookData = JSON.parse(stdinData);
+  } catch { /* no stdin or invalid JSON */ }
+
+  // Play sound (fire and forget, don't wait)
+  const soundPromise = soundFile
+    ? playSoundWithCancel(soundFile).promise.catch(() => {})
+    : Promise.resolve();
+
+  // TTS: speak first 1-2 sentences of last_assistant_message
+  if (tts && hookData.last_assistant_message) {
+    const msg = hookData.last_assistant_message;
+    // Extract first sentence only
+    const sentences = msg.match(/[^.!?]*[.!?]/g);
+    const summary = sentences ? sentences[0].trim() : msg.slice(0, 100);
+    await soundPromise;
+    const { speak } = await import("./tts.js");
+    await speak(summary);
+  } else {
+    await soundPromise;
+  }
+}
+
+/**
  * Generate the shell command string for use in Claude Code hooks.
  */
-export function getHookPlayCommand(soundFilePath) {
+export function getHookPlayCommand(soundFilePath, { tts = false } = {}) {
   const normalized = soundFilePath.replace(/\\/g, "/");
-  const ext = extname(normalized).toLowerCase();
-  const needsFfplay = !MEDIA_PLAYER_FORMATS.has(ext);
-
-  if (needsFfplay) {
-    return `if command -v ffplay &>/dev/null; then ffplay -nodisp -autoexit -loglevel quiet "${normalized}" & elif [[ "$OSTYPE" == "darwin"* ]]; then afplay "${normalized}" & elif [[ "$OSTYPE" == "msys"* ]] || [[ "$OSTYPE" == "cygwin"* ]]; then powershell.exe -NoProfile -Command "Add-Type -AssemblyName PresentationCore; \\$p = New-Object System.Windows.Media.MediaPlayer; \\$p.Open([System.Uri]::new('$(cygpath -w "${normalized}")')); Start-Sleep -Milliseconds 200; \\$p.Play(); Start-Sleep -Seconds 2" & else aplay "${normalized}" & fi`;
-  }
-
-  return `if [[ "$OSTYPE" == "darwin"* ]]; then afplay "${normalized}" & elif [[ "$OSTYPE" == "msys"* ]] || [[ "$OSTYPE" == "cygwin"* ]]; then powershell.exe -NoProfile -Command "Add-Type -AssemblyName PresentationCore; \\$p = New-Object System.Windows.Media.MediaPlayer; \\$p.Open([System.Uri]::new('$(cygpath -w "${normalized}")')); Start-Sleep -Milliseconds 200; \\$p.Play(); Start-Sleep -Seconds 2" & else aplay "${normalized}" & fi`;
+  const ttsFlag = tts ? " --tts" : "";
+  return `npx klaudio play "${normalized}"${ttsFlag}`;
 }
