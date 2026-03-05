@@ -375,11 +375,14 @@ export async function speak(text, options = {}) {
       : options;
 
     // Try Kokoro first (works on all platforms, best quality)
-    try {
-      await speakKokoro(text, voice);
-      return;
-    } catch {
-      // Kokoro unavailable — fall through
+    // Check availability first to avoid loading native module that may crash
+    if (await isKokoroAvailable()) {
+      try {
+        await speakKokoro(text, voice);
+        return;
+      } catch {
+        // Kokoro failed at runtime — fall through
+      }
     }
 
     // macOS: use built-in `say`

@@ -1,8 +1,12 @@
 import { readFile, writeFile, mkdir, copyFile } from "node:fs/promises";
 import { join, basename, extname } from "node:path";
 import { homedir } from "node:os";
+import { createRequire } from "node:module";
 import { getHookPlayCommand, processSound } from "./player.js";
 import { EVENTS } from "./presets.js";
+
+const _require = createRequire(import.meta.url);
+const KLAUDIO_VERSION = _require("../package.json").version;
 
 /**
  * Get the target directory based on install scope.
@@ -84,6 +88,7 @@ export async function install({ scope, sounds, tts = false, voice } = {}) {
     // Add our hook
     settings.hooks[hookEvent].push({
       _klaudio: true,
+      _klaudioVersion: KLAUDIO_VERSION,
       matcher: "",
       hooks: [
         {
@@ -253,7 +258,8 @@ export async function getExistingSounds(scope) {
       const hookEntries = settings.hooks[event.hookEvent];
       if (!hookEntries) continue;
       const entry = hookEntries.find((e) => e._klaudio || e._klonk
-        || e.hooks?.[0]?.command?.includes("klaudio"));
+        || e.hooks?.[0]?.command?.includes("klaudio")
+        || e.hooks?.[0]?.command?.includes(".claude/sounds/"));
       if (!entry?.hooks?.[0]?.command) continue;
 
       // Extract file path from the play command
@@ -283,16 +289,30 @@ export async function checkHooksOutdated(scope) {
     const settings = JSON.parse(existing);
     if (!settings.hooks) return reasons;
 
+    const isOurs = (e) => e._klaudio || e._klonk || e.hooks?.[0]?.command?.includes("klaudio") || e.hooks?.[0]?.command?.includes(".claude/sounds/");
+
+    // Check if any klaudio hook was installed with an older version
+    const allKlaudioHooks = Object.values(settings.hooks).flat().filter(isOurs);
+    if (allKlaudioHooks.length > 0) {
+      const hasVersionMismatch = allKlaudioHooks.some((e) => e._klaudioVersion !== KLAUDIO_VERSION);
+      if (hasVersionMismatch) {
+        const installedVer = allKlaudioHooks.find((e) => e._klaudioVersion)?._klaudioVersion;
+        reasons.push(installedVer
+          ? `Hooks from v${installedVer} → v${KLAUDIO_VERSION}`
+          : `Hooks need update to v${KLAUDIO_VERSION}`);
+      }
+    }
+
     // Check Stop hook for --notify flag
     const stopEntries = settings.hooks.Stop || [];
-    const stopHook = stopEntries.find((e) => e._klaudio || e.hooks?.[0]?.command?.includes("klaudio"));
+    const stopHook = stopEntries.find(isOurs);
     if (stopHook?.hooks?.[0]?.command && !stopHook.hooks[0].command.includes("--notify")) {
       reasons.push("System notifications on task complete");
     }
 
     // Check Notification hook for --notify flag
     const notifEntries = settings.hooks.Notification || [];
-    const notifHook = notifEntries.find((e) => e._klaudio || e.hooks?.[0]?.command?.includes("klaudio"));
+    const notifHook = notifEntries.find(isOurs);
     if (notifHook?.hooks?.[0]?.command && !notifHook.hooks[0].command.includes("--notify")) {
       reasons.push("System notifications on background task");
     }
@@ -336,7 +356,7 @@ export async function uninstall(scope) {
     if (settings.hooks) {
       for (const [event, entries] of Object.entries(settings.hooks)) {
         settings.hooks[event] = entries.filter(
-          (entry) => !entry._klaudio && !entry._klonk
+          (entry) => !entry._klaudio && !entry._klonk && !entry.hooks?.[0]?.command?.includes(".claude/sounds/")
         );
         if (settings.hooks[event].length === 0) {
           delete settings.hooks[event];
