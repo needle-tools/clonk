@@ -374,8 +374,13 @@ export async function speak(text, options = {}) {
       ? { voice: null, onProgress: options }  // backwards compat: speak(text, onProgress)
       : options;
 
-    // Try Kokoro first (works on all platforms, best quality)
-    // Check availability first to avoid loading native module that may crash
+    // macOS: use built-in `say` (skip Kokoro — native onnxruntime module
+    // can abort the process with a C++ exception before JS can catch it)
+    if (platform() === "darwin") {
+      return speakMacOS(text);
+    }
+
+    // Try Kokoro (best quality, works on Linux/Windows)
     if (await isKokoroAvailable()) {
       try {
         await speakKokoro(text, voice);
@@ -383,11 +388,6 @@ export async function speak(text, options = {}) {
       } catch {
         // Kokoro failed at runtime — fall through
       }
-    }
-
-    // macOS: use built-in `say`
-    if (platform() === "darwin") {
-      return speakMacOS(text);
     }
 
     // Fallback: Piper

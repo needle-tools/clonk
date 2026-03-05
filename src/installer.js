@@ -80,9 +80,9 @@ export async function install({ scope, sounds, tts = false, voice } = {}) {
       settings.hooks[hookEvent] = [];
     }
 
-    // Remove any existing klaudio/klonk entries
+    // Remove any existing klaudio/klonk entries (including legacy hooks without marker)
     settings.hooks[hookEvent] = settings.hooks[hookEvent].filter(
-      (entry) => !entry._klaudio && !entry._klonk
+      (entry) => !entry._klaudio && !entry._klonk && !entry.hooks?.[0]?.command?.includes(".claude/sounds/")
     );
 
     // Add our hook
