@@ -40,17 +40,70 @@ const KOKORO_VOICES = [
 // Singleton: reuse the loaded model across calls
 let kokoroInstance = null;
 let kokoroLoadPromise = null;
+const KOKORO_DIR = join(homedir(), ".klaudio", "kokoro");
 
 /**
- * Load the Kokoro TTS model (singleton, downloads ~86MB on first use).
- * Uses CPU backend (DirectML has ConvTranspose compatibility issues).
+ * Ensure kokoro-js is installed in ~/.klaudio/kokoro.
+ * Installs on first use via npm.
+ */
+async function ensureKokoroInstalled() {
+  const kokoroMod = join(KOKORO_DIR, "node_modules", "kokoro-js");
+  try {
+    await stat(join(kokoroMod, "package.json"));
+    return; // already installed
+  } catch { /* needs install */ }
+
+  await mkdir(KOKORO_DIR, { recursive: true });
+  await fsWriteFile(join(KOKORO_DIR, "package.json"), '{"private":true}', "utf-8");
+
+  const npmCmd = platform() === "win32" ? "npm.cmd" : "npm";
+  await new Promise((resolve, reject) => {
+    execFile(npmCmd, ["install", "kokoro-js"], {
+      cwd: KOKORO_DIR,
+      windowsHide: true,
+      timeout: 180000,
+    }, (err) => err ? reject(err) : resolve());
+  });
+}
+
+/**
+ * Try to import kokoro-js from various locations.
+ */
+async function importKokoro() {
+  // 1. Try local ~/.klaudio/kokoro install
+  try {
+    const { createRequire } = await import("node:module");
+    const req = createRequire(join(KOKORO_DIR, "node_modules", "kokoro-js", "package.json"));
+    return req("kokoro-js");
+  } catch { /* not there */ }
+
+  // 2. Try global/project import (dev environment or globally installed)
+  try {
+    return await import("kokoro-js");
+  } catch { /* not available */ }
+
+  throw new Error("kokoro-js not available");
+}
+
+/**
+ * Load the Kokoro TTS model (singleton).
+ * Auto-installs kokoro-js on first use, then downloads ~25MB model on first generate.
  */
 async function getKokoro() {
   if (kokoroInstance) return kokoroInstance;
   if (kokoroLoadPromise) return kokoroLoadPromise;
 
   kokoroLoadPromise = (async () => {
-    const { KokoroTTS } = await import("kokoro-js");
+    // Try import first (already installed?), otherwise install then import
+    let mod;
+    try {
+      mod = await importKokoro();
+    } catch {
+      await ensureKokoroInstalled();
+      mod = await importKokoro();
+    }
+
+    const { KokoroTTS } = mod;
     kokoroInstance = await KokoroTTS.from_pretrained(
       "onnx-community/Kokoro-82M-v1.0-ONNX",
       { dtype: "q4", device: "cpu" },
