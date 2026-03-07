@@ -139,8 +139,7 @@ export async function findPackedAudioFiles(gamePath, maxFiles = 50) {
         } else if (entry.isFile()) {
           const ext = extname(entry.name).toLowerCase();
           // Formats vgmstream-cli can convert directly
-          // (.bnk needs bnkextr preprocessing — skip for now)
-          if (ext === ".wem" || ext === ".fsb" || ext === ".bank" || ext === ".bun" || ext === ".pck") {
+          if (ext === ".wem" || ext === ".fsb" || ext === ".bank" || ext === ".bun" || ext === ".pck" || ext === ".bnk") {
             results.push({ path: fullPath, name: entry.name, dir });
           }
         }

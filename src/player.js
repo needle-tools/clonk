@@ -469,12 +469,15 @@ export async function handlePlayCommand(args) {
     await soundPromise;
     const voice = args.find((a) => a.startsWith("--voice="))?.slice(8)
       || args[args.indexOf("--voice") + 1];
+    const speedArg = args.find((a) => a.startsWith("--speed="))?.slice(8)
+      || args[args.indexOf("--speed") + 1];
+    const speed = speedArg ? parseFloat(speedArg) : undefined;
     // Spawn a detached child process for TTS so the hook can exit immediately
     const { spawn } = await import("node:child_process");
     const child = spawn(process.execPath, [
       "--input-type=module",
       "-e",
-      `import{speak}from"${import.meta.resolve("./tts.js")}";await speak(${JSON.stringify(spoken)},{voice:${JSON.stringify(voice || undefined)}});`,
+      `import{speak}from"${import.meta.resolve("./tts.js")}";await speak(${JSON.stringify(spoken)},{voice:${JSON.stringify(voice || undefined)},speed:${JSON.stringify(speed || undefined)}});`,
     ], {
       detached: true,
       stdio: "ignore",
@@ -488,10 +491,11 @@ export async function handlePlayCommand(args) {
 /**
  * Generate the shell command string for use in Claude Code hooks.
  */
-export function getHookPlayCommand(soundFilePath, { tts = false, voice, notify = true } = {}) {
+export function getHookPlayCommand(soundFilePath, { tts = false, voice, speed, notify = true } = {}) {
   const normalized = soundFilePath.replace(/\\/g, "/");
   const ttsFlag = tts ? " --tts" : "";
   const voiceFlag = tts && voice ? ` --voice ${voice}` : "";
+  const speedFlag = tts && speed && speed !== 1.0 ? ` --speed ${speed}` : "";
   const notifyFlag = notify ? " --notify" : "";
-  return `npx klaudio play "${normalized}"${ttsFlag}${voiceFlag}${notifyFlag}`;
+  return `npx klaudio play "${normalized}"${ttsFlag}${voiceFlag}${speedFlag}${notifyFlag}`;
 }

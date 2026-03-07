@@ -133,11 +133,12 @@ async function getKokoro() {
  * Speak text using Kokoro TTS.
  * Returns true if successful, false if Kokoro is unavailable.
  */
-async function speakKokoro(text, voice) {
+async function speakKokoro(text, voice, speed) {
   const tts = await getKokoro();
   const voiceId = voice || KOKORO_DEFAULT_VOICE;
+  const voiceSpeed = speed || 1.0;
 
-  const audio = await tts.generate(text, { voice: voiceId, speed: 1.0 });
+  const audio = await tts.generate(text, { voice: voiceId, speed: voiceSpeed });
 
   // Save to temp wav and play
   const hash = createHash("md5").update(text + voiceId).digest("hex").slice(0, 8);
@@ -360,6 +361,7 @@ async function releaseTTSLock() {
  * @param {string} text - Text to speak
  * @param {object} [options]
  * @param {string} [options.voice] - Kokoro voice ID (e.g. "af_heart")
+ * @param {number} [options.speed] - Voice speed multiplier (default 1.0)
  * @param {Function} [options.onProgress] - Progress callback for downloads
  */
 export async function speak(text, options = {}) {
@@ -369,14 +371,14 @@ export async function speak(text, options = {}) {
   speaking = true;
 
   try {
-    const { voice, onProgress } = typeof options === "function"
-      ? { voice: null, onProgress: options }  // backwards compat: speak(text, onProgress)
+    const { voice, speed, onProgress } = typeof options === "function"
+      ? { voice: null, speed: null, onProgress: options }  // backwards compat: speak(text, onProgress)
       : options;
 
     // Try Kokoro (best quality)
     if (await isKokoroAvailable()) {
       try {
-        await speakKokoro(text, voice);
+        await speakKokoro(text, voice, speed);
         return;
       } catch {
         // Kokoro failed at runtime — fall through
@@ -394,4 +396,4 @@ export async function speak(text, options = {}) {
   }
 }
 
-export { KOKORO_PRESET_VOICES, KOKORO_VOICES, KOKORO_DEFAULT_VOICE };
+export { KOKORO_PRESET_VOICES, KOKORO_VOICES, KOKORO_DEFAULT_VOICE, ensureKokoroInstalled };

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import { render, Box, Text, useInput, useApp } from "ink";
 import Spinner from "ink-spinner";
 import { PRESETS, EVENTS } from "./presets.js";
-import { KOKORO_PRESET_VOICES, KOKORO_VOICES, KOKORO_DEFAULT_VOICE, isKokoroAvailable } from "./tts.js";
+import { KOKORO_PRESET_VOICES, KOKORO_VOICES, KOKORO_DEFAULT_VOICE, isKokoroAvailable, ensureKokoroInstalled } from "./tts.js";
 import { playSoundWithCancel, getWavDuration } from "./player.js";
 import { getAvailableGames, getSystemSounds } from "./scanner.js";
 import { install, uninstall, getExistingSounds, checkHooksOutdated } from "./installer.js";
@@ -137,7 +137,9 @@ const NavHint = ({ back = true, extra = "" }) =>
   );
 
 // ── Screen: Scope ───────────────────────────────────────────────
-const ScopeScreen = ({ onNext, onMusic, onUpdate, tts, onToggleTts, voice, hasKokoro, onCycleVoice, outdatedReasons }) => {
+const SPEED_OPTIONS = [0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.5];
+
+const ScopeScreen = ({ onNext, onMusic, onUpdate, tts, onToggleTts, voice, speed, hasKokoro, onCycleVoice, onCycleSpeed, onInstallKokoro, installingKokoro, outdatedReasons }) => {
   const isOutdated = outdatedReasons && outdatedReasons.length > 0;
   const items = [
     ...(isOutdated ? [{ label: "⬆ Apply updates", value: "_update" }] : []),
@@ -166,6 +168,10 @@ const ScopeScreen = ({ onNext, onMusic, onUpdate, tts, onToggleTts, voice, hasKo
       import("../src/tts.js").then(({ speak }) =>
         speak(`Hi, I'm ${nextVoice.name}`, { voice: nextVoice.id })
       ).finally(() => setPreviewing(false));
+    } else if (input === "v" && tts && !hasKokoro && !installingKokoro) {
+      onInstallKokoro();
+    } else if (input === "s" && tts && hasKokoro) {
+      onCycleSpeed();
     } else if (key.return) {
       const v = items[sel].value;
       if (v === "_update") onUpdate();
@@ -206,6 +212,18 @@ const ScopeScreen = ({ onNext, onMusic, onUpdate, tts, onToggleTts, voice, hasKo
           : `🎙 Voice: ${voiceInfo.name} (${voiceInfo.gender}, ${voiceInfo.accent})`,
       ),
       h(Text, { dimColor: true }, "  (v to change & preview)"),
+    ) : null,
+    tts && hasKokoro ? h(Box, { marginLeft: 4 },
+      h(Text, { color: ACCENT }, `⚡ Speed: ${speed}x`),
+      h(Text, { dimColor: true }, "  (s to change)"),
+    ) : null,
+    tts && !hasKokoro ? h(Box, { marginLeft: 4 },
+      installingKokoro
+        ? h(Text, { color: "yellow" }, h(Spinner, { type: "dots" }), " Installing Kokoro HD voices...")
+        : h(React.Fragment, null,
+            h(Text, { color: "yellow" }, "🎙 HD voices available"),
+            h(Text, { dimColor: true }, "  (v to install Kokoro — 12 voices, ~25MB)"),
+          ),
     ) : null,
   );
 };
@@ -1421,11 +1439,13 @@ const ExtractingScreen = ({ game, onDone, onBack }) => {
 };
 
 // ── Screen: Confirm ─────────────────────────────────────────────
-const ConfirmScreen = ({ scope, sounds, tts, voice, hasKokoro, onToggleTts, onCycleVoice, onConfirm, onBack }) => {
+const ConfirmScreen = ({ scope, sounds, tts, voice, speed, hasKokoro, onToggleTts, onCycleVoice, onCycleSpeed, onInstallKokoro, installingKokoro, onConfirm, onBack }) => {
   useInput((input, key) => {
     if (key.escape) onBack();
     else if (input === "t") onToggleTts();
     else if (input === "v" && tts && hasKokoro) onCycleVoice();
+    else if (input === "s" && tts && hasKokoro) onCycleSpeed();
+    else if (input === "v" && tts && !hasKokoro && !installingKokoro) onInstallKokoro();
   });
 
   const items = [
@@ -1457,6 +1477,18 @@ const ConfirmScreen = ({ scope, sounds, tts, voice, hasKokoro, onToggleTts, onCy
         ),
         h(Text, { dimColor: true }, "  (v to change voice)"),
       ) : null,
+      tts && hasKokoro ? h(Box, { marginLeft: 4 },
+        h(Text, { color: ACCENT }, `⚡ Speed: ${speed}x`),
+        h(Text, { dimColor: true }, "  (s to change)"),
+      ) : null,
+      tts && !hasKokoro ? h(Box, { marginLeft: 4 },
+        installingKokoro
+          ? h(Text, { color: "yellow" }, h(Spinner, { type: "dots" }), " Installing Kokoro HD voices...")
+          : h(React.Fragment, null,
+              h(Text, { color: "yellow" }, "🎙 HD voices available"),
+              h(Text, { dimColor: true }, "  (v to install Kokoro — 12 voices, ~25MB)"),
+            ),
+      ) : null,
     ),
     h(Box, { marginTop: 1, marginLeft: 2 },
       h(SelectInput, { indicatorComponent: Indicator, itemComponent: Item, items, onSelect: (item) => {
@@ -1469,13 +1501,13 @@ const ConfirmScreen = ({ scope, sounds, tts, voice, hasKokoro, onToggleTts, onCy
 };
 
 // ── Screen: Installing ──────────────────────────────────────────
-const InstallingScreen = ({ scope, sounds, tts, voice, onDone }) => {
+const InstallingScreen = ({ scope, sounds, tts, voice, speed, onDone }) => {
   useEffect(() => {
     const validSounds = {};
     for (const [eventId, path] of Object.entries(sounds)) {
       if (path) validSounds[eventId] = path;
     }
-    install({ scope, sounds: validSounds, tts, voice }).then(onDone).catch((err) => {
+    install({ scope, sounds: validSounds, tts, voice, speed }).then(onDone).catch((err) => {
       onDone({ error: err.message });
     });
   }, []);
@@ -1581,7 +1613,9 @@ const InstallApp = () => {
   const [installResult, setInstallResult] = useState(null);
   const [tts, setTts] = useState(true);
   const [voice, setVoice] = useState(KOKORO_DEFAULT_VOICE);
+  const [speed, setSpeed] = useState(1.0);
   const [hasKokoro, setHasKokoro] = useState(false);
+  const [installingKokoro, setInstallingKokoro] = useState(false);
   const [outdatedReasons, setOutdatedReasons] = useState([]);
   const [musicFiles, setMusicFiles] = useState([]);
   const [musicGameName, setMusicGameName] = useState(null);
@@ -1608,19 +1642,33 @@ const InstallApp = () => {
     if (preset) setSounds({ ...preset.sounds });
   }, []);
 
+  const handleInstallKokoro = useCallback(() => {
+    setInstallingKokoro(true);
+    ensureKokoroInstalled()
+      .then(() => { setHasKokoro(true); setInstallingKokoro(false); })
+      .catch(() => { setInstallingKokoro(false); });
+  }, []);
+
   const content = (() => {
     switch (screen) {
       case SCREEN.SCOPE:
         return h(ScopeScreen, {
           tts,
           voice,
+          speed,
           hasKokoro,
+          installingKokoro,
           outdatedReasons,
           onToggleTts: () => setTts((v) => !v),
           onCycleVoice: () => setVoice((v) => {
             const idx = KOKORO_VOICES.findIndex((x) => x.id === v);
             return KOKORO_VOICES[(idx + 1) % KOKORO_VOICES.length].id;
           }),
+          onCycleSpeed: () => setSpeed((s) => {
+            const idx = SPEED_OPTIONS.indexOf(s);
+            return SPEED_OPTIONS[(idx + 1) % SPEED_OPTIONS.length];
+          }),
+          onInstallKokoro: handleInstallKokoro,
           onNext: (s) => {
             setScope(s);
             // Refresh sounds/outdated for the selected scope
@@ -1744,12 +1792,19 @@ const InstallApp = () => {
           sounds,
           tts,
           voice,
+          speed,
           hasKokoro,
+          installingKokoro,
           onToggleTts: () => setTts((v) => !v),
           onCycleVoice: () => setVoice((v) => {
             const idx = KOKORO_VOICES.findIndex((x) => x.id === v);
             return KOKORO_VOICES[(idx + 1) % KOKORO_VOICES.length].id;
           }),
+          onCycleSpeed: () => setSpeed((s) => {
+            const idx = SPEED_OPTIONS.indexOf(s);
+            return SPEED_OPTIONS[(idx + 1) % SPEED_OPTIONS.length];
+          }),
+          onInstallKokoro: handleInstallKokoro,
           onConfirm: () => setScreen(SCREEN.INSTALLING),
           onBack: () => {
             if (selectedGame) setScreen(SCREEN.GAME_SOUNDS);
@@ -1763,6 +1818,7 @@ const InstallApp = () => {
           sounds,
           tts,
           voice,
+          speed,
           onDone: (result) => {
             setInstallResult(result);
             setScreen(SCREEN.DONE);

@@ -19,15 +19,18 @@ if (process.argv[2] === "notify") {
   process.exit(0);
 }
 
-// Subcommand: klaudio say "text" [--voice <voice>]
+// Subcommand: klaudio say "text" [--voice <voice>] [--speed <speed>]
 if (process.argv[2] === "say") {
   const args = process.argv.slice(3);
   const text = args.find((a) => !a.startsWith("--"));
   const voice = args.find((a) => a.startsWith("--voice="))?.slice(8)
     || args[args.indexOf("--voice") + 1];
+  const speedArg = args.find((a) => a.startsWith("--speed="))?.slice(8)
+    || args[args.indexOf("--speed") + 1];
+  const speed = speedArg ? parseFloat(speedArg) : undefined;
   if (text) {
     const { speak } = await import("../src/tts.js");
-    await speak(text, { voice });
+    await speak(text, { voice, speed });
   }
   // Hard exit: skip native module destructors (onnxruntime crashes during cleanup)
   process.exit(0);
