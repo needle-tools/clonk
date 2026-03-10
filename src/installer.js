@@ -35,7 +35,10 @@ export async function install({ scope, sounds, tts = false, voice, speed } = {})
   const installedSounds = {};
   for (const [eventId, sourcePath] of Object.entries(sounds)) {
     const processedPath = await processSound(sourcePath);
-    const srcName = basename(sourcePath, extname(sourcePath));
+    // Strip any accumulated eventId prefixes from previous installs
+    let srcName = basename(sourcePath, extname(sourcePath));
+    const prefixRe = new RegExp(`^(${Object.keys(EVENTS).join("|")})-`, "i");
+    while (prefixRe.test(srcName)) srcName = srcName.replace(prefixRe, "");
     const outExt = extname(processedPath) || ".wav";
     const fileName = `${eventId}-${srcName}${outExt}`;
     const destPath = join(soundsDir, fileName);
